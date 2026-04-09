@@ -1,0 +1,1 @@
+/home/codespace/.copilot/prompts/session-insights.prompt.md
