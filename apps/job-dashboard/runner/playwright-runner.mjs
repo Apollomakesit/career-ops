@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import 'dotenv/config';
 
-import { chromium } from 'playwright';
-
 import { createRunnerClient } from './api-client.mjs';
+import { launchBrowserContext } from './browser-profile.mjs';
 import { buildRequiredFields, fillKnownFields } from './form-filler.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
 
@@ -11,7 +10,6 @@ const localEnv = envFromLocalConfig(loadLocalConfig());
 const env = { ...localEnv, ...process.env };
 const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
 const token = env.DASHBOARD_TOKEN || '';
-const userDataDir = env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-browser';
 
 const client = createRunnerClient({ baseUrl: dashboardUrl, token });
 const packages = await client.fetchApprovedPackages();
@@ -23,8 +21,8 @@ if (packages.length === 0) {
   process.exit(0);
 }
 
-const context = await chromium.launchPersistentContext(userDataDir, { headless: false });
-const page = await context.newPage();
+const context = await launchBrowserContext(env);
+const page = context.pages()[0] || await context.newPage();
 
 try {
   for (const pkg of packages) {

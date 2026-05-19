@@ -3,9 +3,9 @@ import 'dotenv/config';
 
 import { stdin as input, stdout as output } from 'node:process';
 import { createInterface } from 'node:readline/promises';
-import { chromium } from 'playwright';
 
 import { createRunnerClient } from './api-client.mjs';
+import { describeBrowserProfile, launchBrowserContext } from './browser-profile.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
 import { buildPortalSearchPlan, defaultPortalRows, keywordsFromProfile, normalizePortalRows, supportedPortals } from './portal-config.mjs';
 import { dedupeJobs, extractJobsFromPage } from './portal-extractor.mjs';
@@ -14,7 +14,6 @@ const localEnv = envFromLocalConfig(loadLocalConfig());
 const env = { ...localEnv, ...process.env };
 const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
 const token = env.DASHBOARD_TOKEN || '';
-const userDataDir = env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-browser';
 const maxJobs = Number(env.PORTAL_DISCOVERY_MAX_JOBS || 80);
 const perPortalLimit = Number(env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6);
 const requestedPortals = (env.PORTAL_DISCOVERY_PORTALS || supportedPortals.join(','))
@@ -41,16 +40,13 @@ if (plan.length === 0) {
 }
 
 const rl = createInterface({ input, output });
-const context = await chromium.launchPersistentContext(userDataDir, {
-  headless: false,
-  viewport: { width: 1440, height: 1000 },
-});
-const page = await context.newPage();
+const context = await launchBrowserContext(env);
+const page = context.pages()[0] || await context.newPage();
 const imported = [];
 const failed = [];
 
 try {
-  console.log(`Using persistent browser profile: ${userDataDir}`);
+  console.log(`Using browser: ${describeBrowserProfile(env)}`);
   console.log(`Scanning ${plan.length} portal search page(s). You can log in, solve 2FA, or accept cookies in the visible browser when prompted.`);
 
   for (const item of plan) {

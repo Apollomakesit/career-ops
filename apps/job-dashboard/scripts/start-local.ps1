@@ -20,6 +20,8 @@ param(
   [int]$DashboardPort = 3000,
   [int]$CliProxyPort = 8317,
   [int]$ControlPort = 48731,
+  [string]$ChromeProfile = "Default",
+  [switch]$NoSystemChrome,
   [switch]$NoBrowser,
   [switch]$NoStart
 )
@@ -124,10 +126,27 @@ if (-not $managementKey) {
 }
 $CliProxyUrl = "http://127.0.0.1:$CliProxyPort"
 
+# Drive the real Google Chrome profile so portal logins (LinkedIn, eJobs, ...)
+# are already in place. Falls back to a dedicated Playwright profile otherwise.
+$chromeChannel = ""
+$chromeUserData = ""
+if (-not $NoSystemChrome) {
+  $chromeCandidate = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
+  if (Test-Path $chromeCandidate) {
+    $chromeChannel = "chrome"
+    $chromeUserData = $chromeCandidate
+  } else {
+    Write-Warning "Google Chrome user data not found; runners will use a dedicated Playwright profile."
+  }
+}
+
 $config = [ordered]@{
   dashboardUrl   = $DashboardUrl
   dashboardToken = ""
   browserProfile = ".career-ops-browser"
+  browserChannel = $chromeChannel
+  browserUserDataDir = $chromeUserData
+  browserProfileDirectory = $(if ($chromeChannel) { $ChromeProfile } else { "" })
   aiProvider     = $AiProvider
   aiBaseUrl      = "http://127.0.0.1:$CliProxyPort/api/provider/$AiProvider/v1"
   aiModel        = $AiModel
@@ -194,8 +213,18 @@ Write-Host ("Dashboard      {0,-8} {1}" -f $dashboardStatus, $DashboardUrl)
 Write-Host ("CLIProxyAPI    {0,-8} http://127.0.0.1:{1}" -f $cliProxyStatus, $CliProxyPort)
 Write-Host ("Runner control {0,-8} http://127.0.0.1:{1}" -f $controlStatus, $ControlPort)
 Write-Host ("AI provider    {0} / {1}" -f $AiProvider, $AiModel)
+if ($chromeChannel) {
+  Write-Host ("Browser        Google Chrome (profile '{0}')" -f $ChromeProfile)
+} else {
+  Write-Host "Browser        Playwright Chromium (dedicated profile)"
+}
 Write-Host "============================================================="
 Write-Host ""
+if ($chromeChannel) {
+  Write-Host "Note: close all Google Chrome windows before running Find Jobs -" -ForegroundColor Yellow
+  Write-Host "      Chrome cannot share your profile with the automation at the same time." -ForegroundColor Yellow
+  Write-Host ""
+}
 
 if (-not $NoBrowser -and $dashboardStatus -eq "online") {
   Start-Process $DashboardUrl
