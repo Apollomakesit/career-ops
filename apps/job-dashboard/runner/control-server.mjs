@@ -3,6 +3,9 @@ import 'dotenv/config';
 
 import { createServer } from 'node:http';
 
+import { createRunnerClient } from './api-client.mjs';
+import { syncCloudRunner } from './cloud-sync.mjs';
+import { controlCorsHeaders, createControlHandler } from './control-server-core.mjs';
 import { createRunnerManager } from './run-manager.mjs';
 import {
   envFromLocalConfig,
@@ -16,6 +19,13 @@ const port = Number(process.env.LOCAL_RUNNER_PORT || 48731);
 const manager = createRunnerManager({
   envProvider: () => envFromLocalConfig(loadLocalConfig()),
 });
+const commandBindings = new Map();
+const handleControlRequest = createControlHandler({
+  manager,
+  loadConfig: loadLocalConfig,
+  saveConfig: saveLocalConfig,
+  redactConfig: redactLocalConfig,
+});
 
 const server = createServer(async (req, res) => {
   writeCors(res);
@@ -25,50 +35,21 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url || '/', `http://${host}:${port}`);
-
   try {
-    if (req.method === 'GET' && url.pathname === '/health') {
-      writeJson(res, 200, { ok: true, service: 'career-ops-local-runner' });
+    const parsed = new URL(req.url || '/', `http://${host}:${port}`);
+    if (req.method === 'POST' && parsed.pathname === '/cloud-sync') {
+      await syncWithDashboard();
+      writeJson(res, 200, { ok: true });
       return;
     }
 
-    if (req.method === 'GET' && url.pathname === '/config') {
-      writeJson(res, 200, redactLocalConfig(loadLocalConfig()));
-      return;
-    }
-
-    if (req.method === 'PUT' && url.pathname === '/config') {
-      const current = loadLocalConfig();
-      const body = await readJson(req);
-      const merged = saveLocalConfig({
-        ...current,
-        ...body,
-        dashboardToken: body.dashboardToken === 'configured' ? current.dashboardToken : body.dashboardToken,
-        aiProxyApiKey: body.aiProxyApiKey === 'configured' ? current.aiProxyApiKey : body.aiProxyApiKey,
-      });
-      writeJson(res, 200, redactLocalConfig(merged));
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/status') {
-      writeJson(res, 200, manager.status());
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname === '/logs') {
-      writeJson(res, 200, manager.logs(url.searchParams.get('runner') || 'discover'));
-      return;
-    }
-
-    if (req.method === 'POST' && url.pathname === '/start') {
-      const body = await readJson(req);
-      manager.start(body.runner);
-      writeJson(res, 202, manager.status()[body.runner]);
-      return;
-    }
-
-    writeJson(res, 404, { error: 'not_found' });
+    const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readJson(req) : null;
+    const response = await handleControlRequest({
+      method: req.method,
+      url: req.url || '/',
+      body,
+    });
+    writeJson(res, response.status, response.body);
   } catch (error) {
     writeJson(res, 500, { error: 'runner_error', message: error.message });
   }
@@ -78,10 +59,18 @@ server.listen(port, host, () => {
   console.log(`career-ops local runner control listening at http://${host}:${port}`);
 });
 
+const syncIntervalMs = Number(process.env.LOCAL_RUNNER_CLOUD_SYNC_INTERVAL_MS || 3000);
+const syncTimer = setInterval(() => {
+  syncWithDashboard().catch(error => {
+    console.error(`dashboard sync failed: ${error.message}`);
+  });
+}, syncIntervalMs);
+syncWithDashboard().catch(() => {});
+
 function writeCors(res) {
-  res.setHeader('access-control-allow-origin', '*');
-  res.setHeader('access-control-allow-methods', 'GET,POST,PUT,OPTIONS');
-  res.setHeader('access-control-allow-headers', 'content-type,authorization');
+  for (const [key, value] of Object.entries(controlCorsHeaders())) {
+    res.setHeader(key, value);
+  }
 }
 
 async function readJson(req) {
@@ -94,4 +83,18 @@ async function readJson(req) {
 function writeJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+async function syncWithDashboard() {
+  const config = loadLocalConfig();
+  if (!config.dashboardUrl || !config.dashboardToken) return;
+  const client = createRunnerClient({ baseUrl: config.dashboardUrl, token: config.dashboardToken });
+  await syncCloudRunner({
+    client,
+    manager,
+    loadConfig: loadLocalConfig,
+    saveConfig: saveLocalConfig,
+    redactConfig: redactLocalConfig,
+    commandBindings,
+  });
 }

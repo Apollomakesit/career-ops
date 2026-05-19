@@ -236,6 +236,44 @@ h2 {
   flex-wrap: wrap;
 }
 
+.ai-actions {
+  margin-top: 12px;
+}
+
+.model-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.model-result {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.model-result.ok {
+  border-left-color: var(--good);
+}
+
+.model-result.fail {
+  border-left-color: var(--bad);
+}
+
+.model-result span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.model-result small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .wide-panel {
   grid-column: 1 / -1;
 }

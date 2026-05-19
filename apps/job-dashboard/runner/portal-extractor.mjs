@@ -5,6 +5,7 @@ const portalUrlPatterns = {
   ],
   bestjobs: [
     /bestjobs\.eu\/(?:ro\/)?locuri-de-munca\/[^/?#]+(?:\/\d+)?/i,
+    /bestjobs\.eu\/loc-de-munca\/[^/?#]+/i,
     /bestjobs\.eu\/(?:ro\/)?job\//i,
   ],
   hipo: [
@@ -24,6 +25,7 @@ const navigationWords = [
   'apply',
   'salveaza cautarea',
   'set job alert',
+  'inscriere',
 ];
 
 export async function extractJobsFromPage(page, { portal, sourceUrl, keyword }) {
@@ -72,7 +74,7 @@ function normalizeLink({ portal, sourceUrl, link, keyword }) {
     portal,
     source: `portal-discovery:${portal}`,
     sourceQuery: keyword,
-    company: lines[1] && !looksLikeLocation(lines[1]) ? lines[1] : '',
+    company: extractCompany({ portal, url, lines }),
     title,
     location: lines.find(looksLikeLocation) || '',
     description: lines.slice(0, 6).join('\n'),
@@ -123,6 +125,21 @@ function canonicalUrl(value, baseUrl) {
   } catch {
     return '';
   }
+}
+
+function extractCompany({ portal, url, lines }) {
+  const lineCompany = lines[1] && !looksLikeLocation(lines[1]) && !isNavigationText(lines[1])
+    ? lines[1]
+    : '';
+  if (lineCompany) return lineCompany;
+  if (portal !== 'hipo') return '';
+
+  const match = url.match(/\/locuri_de_munca\/\d+\/([^/]+)\//i);
+  if (!match) return '';
+  return decodeURIComponent(match[1])
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function summarizeAround(text, title) {

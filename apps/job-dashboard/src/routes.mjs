@@ -119,6 +119,34 @@ export async function dispatchApi(request, store, services = {}) {
       return json(200, await store.listEvents());
     }
 
+    if (method === 'GET' && url.pathname === '/api/runner/state') {
+      return json(200, await store.getRunnerState());
+    }
+
+    if (method === 'PATCH' && url.pathname === '/api/runner/state') {
+      return json(200, await store.updateRunnerState(request.body || {}));
+    }
+
+    if (method === 'PUT' && url.pathname === '/api/runner/config') {
+      return json(200, await store.updateRunnerDesiredConfig(request.body || {}));
+    }
+
+    if (method === 'GET' && url.pathname === '/api/runner/commands') {
+      return json(200, await store.listRunnerCommands());
+    }
+
+    if (method === 'POST' && url.pathname === '/api/runner/commands') {
+      return json(202, await store.createRunnerCommand(request.body || {}));
+    }
+
+    if (method === 'POST' && url.pathname === '/api/runner/commands/claim') {
+      return json(200, await store.claimRunnerCommand(request.body || {}));
+    }
+
+    if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'runner' && segments[2] === 'commands' && segments[3]) {
+      return json(200, await store.updateRunnerCommand(segments[3], request.body || {}));
+    }
+
     return json(404, { error: 'not_found' });
   } catch (error) {
     return json(500, { error: 'server_error', message: error.message });
@@ -385,6 +413,138 @@ export function createPostgresStore(pool) {
       `);
       return result.rows;
     },
+
+    async getRunnerState() {
+      const result = await pool.query(`
+        SELECT status, config, desired_config AS "desiredConfig",
+               ai_models AS "aiModels", ai_gateway AS "aiGateway",
+               updated_at AS "updatedAt"
+        FROM runner_state
+        WHERE id = 'local'
+        LIMIT 1
+      `);
+      return result.rows[0] || {};
+    },
+
+    async updateRunnerState(payload) {
+      const current = await this.getRunnerState();
+      const result = await pool.query(`
+        INSERT INTO runner_state (id, status, config, desired_config, ai_models, ai_gateway, updated_at)
+        VALUES ('local', $1::jsonb, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, now())
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          config = EXCLUDED.config,
+          desired_config = COALESCE(runner_state.desired_config, EXCLUDED.desired_config),
+          ai_models = EXCLUDED.ai_models,
+          ai_gateway = EXCLUDED.ai_gateway,
+          updated_at = now()
+        RETURNING status, config, desired_config AS "desiredConfig",
+                  ai_models AS "aiModels", ai_gateway AS "aiGateway",
+                  updated_at AS "updatedAt"
+      `, [
+        JSON.stringify(payload.status || {}),
+        JSON.stringify(payload.config || {}),
+        JSON.stringify(current.desiredConfig || payload.desiredConfig || {}),
+        JSON.stringify(payload.aiModels || []),
+        JSON.stringify(payload.aiGateway || {}),
+      ]);
+      return result.rows[0];
+    },
+
+    async updateRunnerDesiredConfig(payload) {
+      const current = await this.getRunnerState();
+      const desiredConfig = {
+        ...(current.desiredConfig || {}),
+        ...payload,
+        updatedAt: new Date().toISOString(),
+      };
+      const result = await pool.query(`
+        INSERT INTO runner_state (id, status, config, desired_config, ai_models, ai_gateway, updated_at)
+        VALUES ('local', $1::jsonb, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, now())
+        ON CONFLICT (id) DO UPDATE SET
+          desired_config = EXCLUDED.desired_config,
+          updated_at = now()
+        RETURNING status, config, desired_config AS "desiredConfig",
+                  ai_models AS "aiModels", ai_gateway AS "aiGateway",
+                  updated_at AS "updatedAt"
+      `, [
+        JSON.stringify(current.status || {}),
+        JSON.stringify(current.config || {}),
+        JSON.stringify(desiredConfig),
+        JSON.stringify(current.aiModels || []),
+        JSON.stringify(current.aiGateway || {}),
+      ]);
+      await appendEvent(pool, 'runner', null, 'runner_config_requested', 'Local runner config update requested', {});
+      return result.rows[0];
+    },
+
+    async listRunnerCommands() {
+      const result = await pool.query(`
+        SELECT id, runner, status, payload, logs, exit_code AS "exitCode",
+               created_at AS "createdAt", claimed_at AS "claimedAt",
+               finished_at AS "finishedAt", updated_at AS "updatedAt"
+        FROM runner_commands
+        ORDER BY created_at DESC
+        LIMIT 50
+      `);
+      return result.rows;
+    },
+
+    async createRunnerCommand(payload) {
+      const runner = normalizeRunnerName(payload.runner);
+      const result = await pool.query(`
+        INSERT INTO runner_commands (runner, status, payload, logs, updated_at)
+        VALUES ($1, 'queued', $2::jsonb, '[]'::jsonb, now())
+        RETURNING id, runner, status, payload, logs, exit_code AS "exitCode",
+                  created_at AS "createdAt", claimed_at AS "claimedAt",
+                  finished_at AS "finishedAt", updated_at AS "updatedAt"
+      `, [runner, JSON.stringify(payload.payload || {})]);
+      await appendEvent(pool, 'runner', result.rows[0].id, 'runner_command_queued', `Runner command queued: ${runner}`, {});
+      return result.rows[0];
+    },
+
+    async claimRunnerCommand() {
+      const result = await pool.query(`
+        WITH next AS (
+          SELECT id
+          FROM runner_commands
+          WHERE status = 'queued'
+          ORDER BY created_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE runner_commands c
+        SET status = 'running', claimed_at = now(), updated_at = now()
+        FROM next
+        WHERE c.id = next.id
+        RETURNING c.id, c.runner, c.status, c.payload, c.logs, c.exit_code AS "exitCode",
+                  c.created_at AS "createdAt", c.claimed_at AS "claimedAt",
+                  c.finished_at AS "finishedAt", c.updated_at AS "updatedAt"
+      `);
+      return result.rows[0] || null;
+    },
+
+    async updateRunnerCommand(id, payload) {
+      const status = String(payload.status || 'running');
+      const result = await pool.query(`
+        UPDATE runner_commands
+        SET status = $2,
+            logs = $3::jsonb,
+            exit_code = $4,
+            finished_at = CASE WHEN $2 IN ('exited', 'error') THEN now() ELSE finished_at END,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING id, runner, status, payload, logs, exit_code AS "exitCode",
+                  created_at AS "createdAt", claimed_at AS "claimedAt",
+                  finished_at AS "finishedAt", updated_at AS "updatedAt"
+      `, [
+        id,
+        status,
+        JSON.stringify(payload.logs || []),
+        Number.isFinite(Number(payload.exitCode)) ? Number(payload.exitCode) : null,
+      ]);
+      return result.rows[0] || null;
+    },
   };
 }
 
@@ -428,4 +588,12 @@ function arrayOfStrings(value) {
   return Array.isArray(value)
     ? value.map(item => String(item || '').trim()).filter(Boolean)
     : [];
+}
+
+function normalizeRunnerName(value) {
+  const runner = String(value || '').trim();
+  if (!['discover', 'score-ai', 'draft-ai', 'applications', 'test-ai', 'test-cheap-ai'].includes(runner)) {
+    throw new Error(`Unsupported runner command: ${runner}`);
+  }
+  return runner;
 }

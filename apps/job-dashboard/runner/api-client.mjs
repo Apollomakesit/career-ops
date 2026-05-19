@@ -69,6 +69,46 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
         },
       });
     },
+
+    async fetchRunnerState() {
+      return request(`${root}/api/runner/state`, { token, fetchImpl });
+    },
+
+    async updateRunnerState(payload) {
+      return request(`${root}/api/runner/state`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
+    async claimRunnerCommand() {
+      return request(`${root}/api/runner/commands/claim`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'POST',
+          body: '{}',
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
+    async updateRunnerCommand(commandId, payload) {
+      return request(`${root}/api/runner/commands/${commandId}`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
   };
 }
 

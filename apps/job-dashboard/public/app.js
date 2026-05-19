@@ -6,6 +6,9 @@ const state = {
   events: [],
   runnerStatus: {},
   runnerConfig: {},
+  runnerCommands: [],
+  aiModels: [],
+  aiGateway: {},
 };
 
 let token = localStorage.getItem('careerOpsDashboardToken') || '';
@@ -26,6 +29,10 @@ document.getElementById('createJobButton').addEventListener('click', createJob);
 document.getElementById('saveProfileButton').addEventListener('click', saveProfile);
 document.getElementById('connectRunnerButton').addEventListener('click', () => loadRunnerStatus({ alertOnError: true }));
 document.getElementById('saveRunnerConfigButton').addEventListener('click', saveRunnerConfig);
+document.getElementById('runnerAiProvider').addEventListener('change', () => renderAiModelOptions(state.runnerConfig));
+document.getElementById('runnerAiModelSelect').addEventListener('change', syncAiModelSelection);
+document.getElementById('testSelectedAiModelButton').addEventListener('click', testSelectedAiModel);
+document.getElementById('testCheapAiModelsButton').addEventListener('click', testCheapAiModels);
 document.querySelectorAll('[data-start-runner]').forEach(button => {
   button.addEventListener('click', () => startRunner(button.dataset.startRunner));
 });
@@ -230,21 +237,27 @@ async function savePortal(portal, button) {
 
 async function loadRunnerStatus({ alertOnError = false } = {}) {
   try {
-    const [health, status, config] = await Promise.all([
+    const [health, status, config, aiModels] = await Promise.all([
       localRunner('/health'),
       localRunner('/status'),
       localRunner('/config'),
+      localRunner('/ai/models').catch(() => ({ models: [], gateway: {} })),
     ]);
     state.runnerStatus = status;
     state.runnerConfig = config;
+    state.aiModels = aiModels.models || [];
+    state.aiGateway = aiModels.gateway || {};
     document.getElementById('localRunnerStatus').textContent = `${health.service} connected`;
     renderRunnerConfig(config);
     renderRunnerStatus(status);
     await loadRunnerLogs();
   } catch (error) {
-    document.getElementById('localRunnerStatus').textContent = 'Local runner offline';
-    renderRunnerStatus({});
-    if (alertOnError) alert(`Local runner is not reachable at ${localRunnerUrl}. Start it with npm run runner:control --prefix apps/job-dashboard`);
+    const cloudState = await loadCloudRunnerState().catch(() => null);
+    if (!cloudState) {
+      document.getElementById('localRunnerStatus').textContent = 'Local runner offline';
+      renderRunnerStatus({});
+      if (alertOnError) alert('Local runner is not reachable yet. Start it with npm run runner:control --prefix apps/job-dashboard');
+    }
   }
 }
 
@@ -253,15 +266,41 @@ async function loadRunnerLogs(runner = 'discover') {
     const logs = await localRunner(`/logs?runner=${encodeURIComponent(runner)}`);
     document.getElementById('runnerLogs').innerHTML = `<code>${escapeHtml(logs.map(item => `[${item.at}] ${item.stream}: ${item.message}`).join('\n') || 'No logs yet.')}</code>`;
   } catch {
-    document.getElementById('runnerLogs').innerHTML = '<code>No local runner logs yet.</code>';
+    renderCloudRunnerLogs(runner);
   }
+}
+
+async function loadCloudRunnerState() {
+  const [runnerState, commands] = await Promise.all([
+    api('/api/runner/state'),
+    api('/api/runner/commands'),
+  ]);
+  state.runnerStatus = runnerState.status || {};
+  state.runnerConfig = runnerState.config || {};
+  state.runnerCommands = commands || [];
+  state.aiModels = runnerState.aiModels || [];
+  state.aiGateway = runnerState.aiGateway || {};
+  const updated = runnerState.updatedAt ? `Synced ${new Date(runnerState.updatedAt).toLocaleTimeString()}` : 'Waiting for local sync';
+  document.getElementById('localRunnerStatus').textContent = updated;
+  renderRunnerConfig(state.runnerConfig);
+  renderRunnerStatus(state.runnerStatus);
+  renderCloudRunnerLogs();
+  return runnerState;
+}
+
+function renderCloudRunnerLogs(runner = 'discover') {
+  const command = state.runnerCommands.find(item => item.runner === runner)
+    || state.runnerCommands.find(item => ['test-ai', 'test-cheap-ai'].includes(item.runner))
+    || state.runnerCommands[0];
+  const logs = command?.logs || [];
+  document.getElementById('runnerLogs').innerHTML = `<code>${escapeHtml(logs.map(item => `[${item.at || command.updatedAt || ''}] ${item.stream || 'cloud'}: ${item.message || ''}${item.detail ? `\n${item.detail}` : ''}`).join('\n') || 'No runner logs yet.')}</code>`;
 }
 
 function renderRunnerConfig(config = {}) {
   setValue('runnerDashboardUrl', config.dashboardUrl || window.location.origin);
   setValue('runnerDashboardToken', config.dashboardToken || token || '');
   setValue('runnerAiProvider', config.aiProvider || 'openai');
-  setValue('runnerAiModel', config.aiModel || 'gpt-5.2');
+  renderAiModelOptions(config);
   setValue('runnerAiBaseUrl', config.aiBaseUrl || 'http://127.0.0.1:8317/api/provider/openai/v1');
   setValue('runnerAiProxyApiKey', config.aiProxyApiKey || '');
   setValue('runnerAiFitLimit', config.aiFitLimit || '40');
@@ -287,24 +326,113 @@ function renderRunnerStatus(status = {}) {
   });
 }
 
+function renderAiModelOptions(config = {}) {
+  const select = document.getElementById('runnerAiModelSelect');
+  const selectedProvider = value('runnerAiProvider') || config.aiProvider || 'openai';
+  const models = state.aiModels.length > 0
+    ? state.aiModels
+    : fallbackAiModels(config);
+
+  select.innerHTML = models.map(model => {
+    const status = model.available ? 'available' : 'not advertised';
+    const suffix = `${model.recommended ? ' · cheap' : ''} · ${status}`;
+    const selected = model.provider === (config.aiProvider || selectedProvider)
+      && [model.id, model.gatewayModel].includes(config.aiModel)
+      ? 'selected'
+      : '';
+    return `<option value="${escapeHtml(model.provider)}|${escapeHtml(model.id)}" data-provider="${escapeHtml(model.provider)}" data-gateway-model="${escapeHtml(model.gatewayModel || model.id)}" data-base-url="${escapeHtml(baseUrlFor(model.provider))}" ${selected}>${escapeHtml(model.label || model.id)}${escapeHtml(suffix)}</option>`;
+  }).join('');
+
+  if (!select.value && select.options.length > 0) {
+    const preferred = [...select.options].find(option => option.dataset.provider === selectedProvider)
+      || [...select.options].find(option => option.dataset.provider === 'anthropic')
+      || select.options[0];
+    preferred.selected = true;
+  }
+
+  syncAiModelSelection();
+}
+
+function syncAiModelSelection() {
+  const selected = selectedAiModel();
+  if (!selected) return;
+  setValue('runnerAiProvider', selected.provider);
+  setValue('runnerAiBaseUrl', selected.baseUrl);
+}
+
 async function saveRunnerConfig() {
+  const selected = selectedAiModel();
   const config = {
     dashboardUrl: value('runnerDashboardUrl') || window.location.origin,
     dashboardToken: value('runnerDashboardToken') || token || '',
-    aiProvider: value('runnerAiProvider'),
-    aiModel: value('runnerAiModel'),
-    aiBaseUrl: value('runnerAiBaseUrl'),
+    aiProvider: selected?.provider || value('runnerAiProvider'),
+    aiModel: selected?.gatewayModel || '',
+    aiBaseUrl: selected?.baseUrl || value('runnerAiBaseUrl'),
     aiProxyApiKey: value('runnerAiProxyApiKey'),
     aiFitLimit: value('runnerAiFitLimit') || '40',
     aiDraftMinFit: value('runnerAiDraftMinFit') || '60',
     aiDraftLimit: value('runnerAiDraftLimit') || '20',
   };
-  await localRunner('/config', { method: 'PUT', body: config });
+  try {
+    await localRunner('/config', { method: 'PUT', body: config });
+  } catch {
+    await api('/api/runner/config', { method: 'PUT', body: config });
+  }
   await loadRunnerStatus({ alertOnError: true });
 }
 
+async function testSelectedAiModel() {
+  const selected = selectedAiModel();
+  if (!selected) return;
+  renderAiModelResults([{ ok: false, provider: '', model: '', detail: 'No model selected.' }]);
+  try {
+    const result = await localRunner('/ai/test', {
+      method: 'POST',
+      body: {
+        provider: selected.provider,
+        model: selected.gatewayModel,
+      },
+    });
+    renderAiModelResults([result]);
+  } catch {
+    await api('/api/runner/commands', {
+      method: 'POST',
+      body: { runner: 'test-ai', payload: { provider: selected.provider, model: selected.gatewayModel } },
+    });
+    renderAiModelResults([{ ok: true, provider: selected.provider, model: selected.gatewayModel, detail: 'Queued on local runner.' }]);
+    setTimeout(() => loadRunnerStatus({ alertOnError: false }), 4000);
+  }
+}
+
+async function testCheapAiModels() {
+  renderAiModelResults([{ ok: false, provider: '', model: '', detail: 'Testing...' }]);
+  try {
+    const result = await localRunner('/ai/test-cheap', { method: 'POST', body: {} });
+    renderAiModelResults(result.results || []);
+  } catch {
+    await api('/api/runner/commands', { method: 'POST', body: { runner: 'test-cheap-ai' } });
+    renderAiModelResults([{ ok: true, provider: 'AI', model: 'cheap set', detail: 'Queued on local runner.' }]);
+    setTimeout(() => loadRunnerStatus({ alertOnError: false }), 4000);
+  }
+}
+
+function renderAiModelResults(results = []) {
+  const target = document.getElementById('aiModelResults');
+  target.innerHTML = results.map(result => `
+    <div class="model-result ${result.ok ? 'ok' : 'fail'}">
+      <strong>${escapeHtml(result.provider || 'AI')} ${escapeHtml(result.model || '')}</strong>
+      <span>${result.ok ? 'OK' : `Failed${result.status ? ` ${result.status}` : ''}`}${result.ms ? ` · ${result.ms}ms` : ''}</span>
+      <small>${escapeHtml(cleanModelDetail(result.detail || ''))}</small>
+    </div>
+  `).join('');
+}
+
 async function startRunner(runner) {
-  await localRunner('/start', { method: 'POST', body: { runner } });
+  try {
+    await localRunner('/start', { method: 'POST', body: { runner } });
+  } catch {
+    await api('/api/runner/commands', { method: 'POST', body: { runner } });
+  }
   await loadRunnerStatus({ alertOnError: true });
 }
 
@@ -370,6 +498,40 @@ function parseJson(text, fallback) {
     alert('Field hints must be valid JSON.');
     return fallback;
   }
+}
+
+function selectedAiModel() {
+  const select = document.getElementById('runnerAiModelSelect');
+  const option = select.selectedOptions[0];
+  if (!option) return null;
+  return {
+    provider: option.dataset.provider || value('runnerAiProvider'),
+    gatewayModel: option.dataset.gatewayModel || option.value.split('|')[1] || '',
+    baseUrl: option.dataset.baseUrl || baseUrlFor(option.dataset.provider),
+  };
+}
+
+function fallbackAiModels(config = {}) {
+  const provider = config.aiProvider || 'anthropic';
+  const model = config.aiModel || (provider === 'anthropic' ? 'SubscriptionGateway/claude-haiku-4-5-20251001' : 'gpt-5.4-mini');
+  return [{
+    provider,
+    id: model,
+    gatewayModel: model,
+    label: model,
+    recommended: false,
+    available: false,
+  }];
+}
+
+function baseUrlFor(provider) {
+  return `http://127.0.0.1:8317/api/provider/${provider === 'anthropic' ? 'anthropic' : 'openai'}/v1`;
+}
+
+function cleanModelDetail(detail) {
+  return String(detail || '')
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer [redacted]')
+    .slice(0, 220);
 }
 
 async function localRunner(path, options = {}) {

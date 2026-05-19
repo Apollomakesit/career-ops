@@ -2,6 +2,8 @@
 
 Railway hosts the dashboard and PostgreSQL database. Your Windows PC runs the browser automation and account-backed AI through CLIProxyAPI.
 
+Runner controls use a Railway/Postgres relay: the hosted dashboard queues commands, and the local runner polls Railway, executes them on your PC, and pushes status/logs/model availability back. This avoids browser private-network blocking between an HTTPS Railway page and `127.0.0.1`.
+
 Live dashboard: https://job-dashboard-production-0773.up.railway.app
 
 ## Start Here
@@ -43,10 +45,10 @@ This script:
 Use OpenAI/Codex instead of Anthropic/Claude:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File apps/job-dashboard/scripts/start-local.ps1 -AiProvider openai -AiModel gpt-5.2
+powershell -ExecutionPolicy Bypass -File apps/job-dashboard/scripts/start-local.ps1 -AiProvider openai -AiModel gpt-5.4-mini
 ```
 
-The default Anthropic model is `SubscriptionGateway/claude-sonnet-4-6`, which matches the provider-prefixed model IDs exposed by your CLIProxyAPI configuration.
+The default Anthropic model is `SubscriptionGateway/claude-haiku-4-5-20251001`, the cheapest working Claude option currently exposed by your CLIProxyAPI configuration. The dashboard can also test `gpt-5.4-mini` through Codex/OpenAI when that OAuth session is fresh.
 
 ### 3. Connect the dashboard
 
@@ -65,6 +67,25 @@ railway variable list --service job-dashboard --kv
 Paste the `DASHBOARD_TOKEN` value.
 
 Go to `Operations` and click `Check Local Runner`. It should show `career-ops-local-runner connected`.
+
+Use the same page to choose and test AI models:
+
+- `AI model`: shows the requested OpenAI and Anthropic model list, with gateway availability.
+- `Test Selected Model`: sends a tiny local CLIProxyAPI call using the selected provider/model.
+- `Test Cheap Models`: tests `gpt-5.4-mini` and `SubscriptionGateway/claude-haiku-4-5-20251001`.
+
+Command-line equivalent:
+
+```powershell
+npm run test:models --prefix apps/job-dashboard
+```
+
+If OpenAI/Codex models show `auth_unavailable`, refresh that OAuth session:
+
+```powershell
+cd "E:\Github Repos\CLIProxyAPI"
+go run ./cmd/server -codex-login
+```
 
 ### 4. Configure profile and portals
 
@@ -89,6 +110,14 @@ Command-line equivalent:
 ```powershell
 npm run discover --prefix apps/job-dashboard
 ```
+
+Portal smoke test without importing jobs:
+
+```powershell
+npm run smoke:portals --prefix apps/job-dashboard
+```
+
+This checks whether eJobs, BestJobs, HiPo, and LinkedIn search pages are reachable and whether the extractor can see postings.
 
 ### 6. AI-score discovered jobs
 
@@ -154,6 +183,8 @@ npm run run:applications --prefix apps/job-dashboard
 npm test --prefix apps/job-dashboard
 node verify-pipeline.mjs
 npm run runner:control --prefix apps/job-dashboard
+npm run test:models --prefix apps/job-dashboard
+npm run smoke:portals --prefix apps/job-dashboard
 npm run discover --prefix apps/job-dashboard
 npm run score:ai --prefix apps/job-dashboard
 npm run draft:ai --prefix apps/job-dashboard

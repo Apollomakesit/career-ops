@@ -10,6 +10,8 @@ export const requiredTables = [
   'jobs',
   'application_packages',
   'events',
+  'runner_state',
+  'runner_commands',
 ];
 
 export const SCHEMA_SQL = `
@@ -118,6 +120,33 @@ CREATE TABLE IF NOT EXISTS events (
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS runner_state (
+  id TEXT PRIMARY KEY DEFAULT 'local',
+  status JSONB NOT NULL DEFAULT '{}'::jsonb,
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  desired_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ai_models JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ai_gateway JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS runner_commands (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  runner TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  exit_code INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  claimed_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS runner_commands_status_created_idx
+  ON runner_commands (status, created_at);
 `;
 
 export async function migrate(pool = createPool()) {

@@ -11,6 +11,8 @@
     "discover": "node runner/portal-discovery-runner.mjs",
     "score:ai": "node runner/ai-fit-runner.mjs",
     "draft:ai": "node runner/ai-draft-runner.mjs",
+    "test:models": "node runner/test-ai-models.mjs",
+    "smoke:portals": "node runner/portal-smoke-runner.mjs",
     "runner:control": "node runner/control-server.mjs",
     "run:applications": "node runner/playwright-runner.mjs"
   },

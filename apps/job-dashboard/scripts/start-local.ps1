@@ -3,7 +3,7 @@ param(
   [string]$CliProxyPath = "E:\Github Repos\CLIProxyAPI",
   [ValidateSet("openai", "anthropic")]
   [string]$AiProvider = "anthropic",
-  [string]$AiModel = "SubscriptionGateway/claude-sonnet-4-6",
+  [string]$AiModel = "",
   [int]$CliProxyPort = 8317,
   [int]$LocalRunnerPort = 48731,
   [switch]$NoStart
@@ -90,6 +90,13 @@ function Resolve-CommandPath {
 $dashboardToken = Get-DashboardToken
 $proxyKey = Get-CliProxyApiKey -Path $CliProxyPath
 $baseUrl = "http://127.0.0.1:$CliProxyPort/api/provider/$AiProvider/v1"
+if (-not $AiModel) {
+  if ($AiProvider -eq "openai") {
+    $AiModel = "gpt-5.4-mini"
+  } else {
+    $AiModel = "SubscriptionGateway/claude-haiku-4-5-20251001"
+  }
+}
 
 $config = [ordered]@{
   dashboardUrl = $DashboardUrl

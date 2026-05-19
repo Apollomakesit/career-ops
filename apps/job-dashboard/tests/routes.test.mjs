@@ -15,6 +15,8 @@ function createStore() {
     jobs: [],
     packages: [],
     events: [],
+    runnerState: {},
+    runnerCommands: [],
   };
 
   return {
@@ -66,6 +68,32 @@ function createStore() {
       pkg.runnerStatus = payload.runnerStatus;
       pkg.missingFields = payload.missingFields || {};
       return pkg;
+    },
+    async getRunnerState() { return state.runnerState; },
+    async updateRunnerState(payload) {
+      state.runnerState = { ...state.runnerState, ...payload };
+      return state.runnerState;
+    },
+    async updateRunnerDesiredConfig(payload) {
+      state.runnerState.desiredConfig = payload;
+      return state.runnerState;
+    },
+    async listRunnerCommands() { return state.runnerCommands; },
+    async createRunnerCommand(payload) {
+      const command = { id: `cmd-${state.runnerCommands.length + 1}`, runner: payload.runner, status: 'queued', logs: [] };
+      state.runnerCommands.push(command);
+      return command;
+    },
+    async claimRunnerCommand() {
+      const command = state.runnerCommands.find(item => item.status === 'queued');
+      if (!command) return null;
+      command.status = 'running';
+      return command;
+    },
+    async updateRunnerCommand(id, payload) {
+      const command = state.runnerCommands.find(item => item.id === id);
+      Object.assign(command, payload);
+      return command;
     },
     async listEvents() { return state.events; },
   };
@@ -225,4 +253,57 @@ test('returns a setup error when AI generation is not configured', async () => {
 
   assert.equal(response.status, 424);
   assert.equal(response.body.error, 'ai_not_configured');
+});
+
+test('queues runner commands from the hosted dashboard', async () => {
+  const store = createStore();
+
+  const created = await dispatchApi({
+    method: 'POST',
+    url: '/api/runner/commands',
+    body: { runner: 'discover' },
+  }, store);
+  const listed = await dispatchApi({ method: 'GET', url: '/api/runner/commands' }, store);
+
+  assert.equal(created.status, 202);
+  assert.equal(created.body.runner, 'discover');
+  assert.equal(listed.body[0].status, 'queued');
+});
+
+test('lets the local runner publish state, claim commands, and update logs', async () => {
+  const store = createStore();
+  await dispatchApi({ method: 'POST', url: '/api/runner/commands', body: { runner: 'score-ai' } }, store);
+
+  const stateResponse = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/runner/state',
+    body: {
+      status: { 'score-ai': { status: 'idle' } },
+      aiModels: [{ id: 'claude-haiku-4-5', available: true }],
+    },
+  }, store);
+  const claimed = await dispatchApi({ method: 'POST', url: '/api/runner/commands/claim', body: {} }, store);
+  const updated = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/runner/commands/cmd-1',
+    body: { status: 'exited', exitCode: 0, logs: [{ message: 'done' }] },
+  }, store);
+
+  assert.equal(stateResponse.status, 200);
+  assert.equal(claimed.body.runner, 'score-ai');
+  assert.equal(updated.body.status, 'exited');
+  assert.equal(updated.body.logs[0].message, 'done');
+});
+
+test('stores desired local runner config from the dashboard', async () => {
+  const store = createStore();
+
+  const response = await dispatchApi({
+    method: 'PUT',
+    url: '/api/runner/config',
+    body: { aiProvider: 'anthropic', aiModel: 'claude-haiku-4-5' },
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.desiredConfig.aiModel, 'claude-haiku-4-5');
 });

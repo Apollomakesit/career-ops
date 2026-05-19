@@ -74,14 +74,19 @@ npm run runner:control --prefix apps/job-dashboard</code></pre>
               <label>Dashboard URL<input id="runnerDashboardUrl"></label>
               <label>Dashboard token<input id="runnerDashboardToken" type="password" autocomplete="off"></label>
               <label>AI provider<select id="runnerAiProvider"><option value="openai">OpenAI / Codex via CLIProxyAPI</option><option value="anthropic">Anthropic / Claude via CLIProxyAPI</option></select></label>
-              <label>AI model<input id="runnerAiModel"></label>
+              <label>AI model<select id="runnerAiModelSelect"></select></label>
               <label class="wide">CLIProxyAPI base URL<input id="runnerAiBaseUrl"></label>
               <label class="wide">CLIProxyAPI local auth key<input id="runnerAiProxyApiKey" type="password" autocomplete="off"></label>
               <label>AI score limit<input id="runnerAiFitLimit" type="number" min="1" max="200"></label>
               <label>Minimum fit %<input id="runnerAiDraftMinFit" type="number" min="0" max="100"></label>
               <label>Draft limit<input id="runnerAiDraftLimit" type="number" min="1" max="100"></label>
             </div>
-            <button id="saveRunnerConfigButton" class="primary-button">Save Local Runner Config</button>
+            <div class="button-row ai-actions">
+              <button id="saveRunnerConfigButton" class="primary-button">Save Local Runner Config</button>
+              <button id="testSelectedAiModelButton" class="secondary-button">Test Selected Model</button>
+              <button id="testCheapAiModelsButton" class="secondary-button">Test Cheap Models</button>
+            </div>
+            <div id="aiModelResults" class="model-results"></div>
           </article>
           <article class="item wide-panel">
             <h3>Runner Status</h3>
