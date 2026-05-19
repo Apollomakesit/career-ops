@@ -63,7 +63,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/start') {
       const body = await readJson(req);
-      writeJson(res, 202, manager.start(body.runner));
+      manager.start(body.runner);
+      writeJson(res, 202, manager.status()[body.runner]);
       return;
     }
 
