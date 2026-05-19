@@ -40,6 +40,7 @@ Then use the dashboard Operations tab to configure:
 
 - `openai` with `http://127.0.0.1:8317/api/provider/openai/v1` for OpenAI/Codex
 - `anthropic` with `http://127.0.0.1:8317/api/provider/anthropic/v1` for Anthropic/Claude
+- CLIProxyAPI local auth key from the `api-keys:` entry in `E:\Github Repos\CLIProxyAPI\config.yaml`
 
 The dashboard can start local discovery, local AI draft generation, and local application filling from that tab.
 
@@ -74,6 +75,7 @@ $env:DASHBOARD_TOKEN=(railway variable list --service job-dashboard --json | Con
 $env:AI_PROVIDER="openai"
 $env:AI_BASE_URL="http://127.0.0.1:8317/api/provider/openai/v1"
 $env:AI_MODEL="gpt-5.2"
+$env:AI_PROXY_API_KEY="the-local-api-key-from-CLIProxyAPI-config.yaml"
 npm run draft:ai --prefix apps/job-dashboard
 ```
 

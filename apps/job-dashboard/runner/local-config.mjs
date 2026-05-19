@@ -1,7 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const defaultConfigPath = path.resolve(process.cwd(), '.career-ops-runner.local.json');
+const runnerDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(runnerDir, '..', '..', '..');
+const defaultConfigPath = path.join(repoRoot, '.career-ops-runner.local.json');
 
 export function defaultLocalConfig() {
   return {
