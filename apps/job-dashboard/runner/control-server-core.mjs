@@ -4,7 +4,7 @@ import { listGatewayModels, testAiGatewayModel, testCheapGatewayModels } from '.
 export function controlCorsHeaders() {
   return {
     'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,PUT,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,PUT,PATCH,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     'access-control-allow-private-network': 'true',
   };
@@ -18,6 +18,7 @@ export function createControlHandler({
   listModels = listGatewayModels,
   testModel = testAiGatewayModel,
   testCheapModels = testCheapGatewayModels,
+  fetchImpl = fetch,
 } = {}) {
   return async function handleControlRequest({ method, url, body }) {
     const parsed = new URL(url || '/', 'http://127.0.0.1:48731');
@@ -38,6 +39,9 @@ export function createControlHandler({
         ...incoming,
         dashboardToken: incoming.dashboardToken === 'configured' ? current.dashboardToken : incoming.dashboardToken,
         aiProxyApiKey: incoming.aiProxyApiKey === 'configured' ? current.aiProxyApiKey : incoming.aiProxyApiKey,
+        cliProxyManagementKey: incoming.cliProxyManagementKey === 'configured'
+          ? current.cliProxyManagementKey
+          : incoming.cliProxyManagementKey,
       });
       return response(200, redactConfig(merged));
     }
@@ -84,8 +88,137 @@ export function createControlHandler({
       });
     }
 
+    // --- Linked AI accounts (CLIProxyAPI management API) ----------------------
+
+    if (method === 'GET' && parsed.pathname === '/accounts') {
+      return withManagement(loadConfig(), async management => {
+        const payload = await management('GET', '/v0/management/auth-files');
+        return response(200, { accounts: normalizeAccounts(payload) });
+      });
+    }
+
+    if (method === 'POST' && parsed.pathname === '/accounts/login') {
+      const provider = normalizeAccountProvider((body || {}).provider);
+      if (!provider) return response(400, { error: 'unsupported_provider' });
+      return withManagement(loadConfig(), async management => {
+        // is_webui=1 makes CLIProxyAPI run its own callback forwarder so the
+        // OAuth redirect is captured automatically - no manual code pasting.
+        const path = provider === 'anthropic'
+          ? '/v0/management/anthropic-auth-url?is_webui=1'
+          : '/v0/management/codex-auth-url?is_webui=1';
+        const payload = await management('GET', path);
+        if (!payload || !payload.url) {
+          return response(502, { error: 'login_url_unavailable', detail: payload });
+        }
+        return response(200, { provider, url: payload.url, state: payload.state || '' });
+      });
+    }
+
+    if (method === 'GET' && parsed.pathname === '/accounts/login-status') {
+      const state = parsed.searchParams.get('state') || '';
+      if (!state) return response(400, { error: 'state_required' });
+      return withManagement(loadConfig(), async management => {
+        const payload = await management('GET', `/v0/management/get-auth-status?state=${encodeURIComponent(state)}`);
+        return response(200, payload || { status: 'ok' });
+      });
+    }
+
+    if (method === 'PATCH' && parsed.pathname === '/accounts/status') {
+      const { name, disabled } = body || {};
+      if (!name || typeof disabled !== 'boolean') {
+        return response(400, { error: 'name_and_disabled_required' });
+      }
+      return withManagement(loadConfig(), async management => {
+        await management('PATCH', '/v0/management/auth-files/status', { name, disabled });
+        return response(200, { ok: true, name, disabled });
+      });
+    }
+
     return response(404, { error: 'not_found' });
   };
+
+  // CLIProxyAPI management calls share auth + base-URL handling and a single
+  // "is it configured / reachable" failure path.
+  async function withManagement(config, fn) {
+    const baseUrl = cliProxyBaseUrl(config);
+    const key = config.cliProxyManagementKey || '';
+    if (!key) {
+      return response(424, {
+        error: 'management_key_missing',
+        message: 'Run the local launcher so CLIProxyAPI starts with account management enabled.',
+      });
+    }
+    const management = async (httpMethod, path, payload) => {
+      const res = await fetchImpl(`${baseUrl}${path}`, {
+        method: httpMethod,
+        headers: {
+          authorization: `Bearer ${key}`,
+          ...(payload ? { 'content-type': 'application/json' } : {}),
+        },
+        body: payload ? JSON.stringify(payload) : undefined,
+      });
+      const text = await res.text();
+      let parsed;
+      try {
+        parsed = text ? JSON.parse(text) : {};
+      } catch {
+        parsed = { raw: text };
+      }
+      if (!res.ok) {
+        const error = new Error(`CLIProxyAPI ${path} failed (${res.status})`);
+        error.status = res.status;
+        error.detail = parsed;
+        throw error;
+      }
+      return parsed;
+    };
+    try {
+      return await fn(management);
+    } catch (error) {
+      return response(error.status === 401 || error.status === 403 ? 424 : 502, {
+        error: 'cli_proxy_unreachable',
+        message: error.message,
+        detail: error.detail,
+      });
+    }
+  }
+}
+
+function cliProxyBaseUrl(config = {}) {
+  if (config.cliProxyUrl) return String(config.cliProxyUrl).replace(/\/$/, '');
+  const base = String(config.aiBaseUrl || 'http://127.0.0.1:8317');
+  const match = base.match(/^https?:\/\/[^/]+/i);
+  return match ? match[0] : 'http://127.0.0.1:8317';
+}
+
+function normalizeAccounts(payload = {}) {
+  const files = Array.isArray(payload.files) ? payload.files : [];
+  return files
+    .map(file => ({
+      id: file.id || file.name || '',
+      name: file.name || file.id || '',
+      provider: displayProvider(file.provider),
+      rawProvider: String(file.provider || '').toLowerCase(),
+      email: file.email || file.account || file.label || '',
+      disabled: Boolean(file.disabled),
+      failed: Number(file.failed || 0),
+    }))
+    .filter(account => account.name);
+}
+
+function displayProvider(provider) {
+  const value = String(provider || '').toLowerCase();
+  if (value === 'claude' || value === 'anthropic') return 'Anthropic';
+  if (value === 'codex' || value === 'openai') return 'OpenAI';
+  if (value === 'gemini') return 'Gemini';
+  return provider || 'Unknown';
+}
+
+function normalizeAccountProvider(provider) {
+  const value = String(provider || '').toLowerCase();
+  if (value === 'anthropic' || value === 'claude') return 'anthropic';
+  if (value === 'openai' || value === 'codex') return 'openai';
+  return '';
 }
 
 function response(status, body) {

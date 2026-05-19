@@ -479,3 +479,100 @@ dialog {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- AI accounts ---------------------------------------------------------- */
+
+.account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-row > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.tag-anthropic {
+  background: #f3efff;
+  border-color: #d9ccff;
+  color: #5b3da8;
+}
+
+.tag-openai {
+  background: #e7f7f1;
+  border-color: #bce6d6;
+  color: #0a7a53;
+}
+
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.badge-on {
+  background: #e6f4ec;
+  color: var(--good);
+}
+
+.badge-off {
+  background: #eef0f4;
+  color: var(--muted);
+}
+
+.badge-warn {
+  background: #fdf0e3;
+  color: var(--warn);
+}
+
+.login-status {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  display: none;
+}
+
+.login-status.active,
+.login-status.error,
+.login-status.success {
+  display: block;
+}
+
+.login-status.active {
+  background: #eef6f7;
+  border: 1px solid #bcdfe2;
+  color: var(--accent-strong);
+}
+
+.login-status.success {
+  background: #e6f4ec;
+  border: 1px solid #bce6d6;
+  color: var(--good);
+}
+
+.login-status.error {
+  background: #fdecea;
+  border: 1px solid #f3c4be;
+  color: var(--bad);
+}
+
+.error-text {
+  color: var(--bad);
+}

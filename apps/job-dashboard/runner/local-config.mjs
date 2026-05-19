@@ -18,6 +18,8 @@ export function defaultLocalConfig() {
     aiFitLimit: process.env.AI_FIT_LIMIT || '40',
     aiDraftMinFit: process.env.AI_DRAFT_MIN_FIT || '60',
     aiDraftLimit: process.env.AI_DRAFT_LIMIT || '20',
+    cliProxyUrl: process.env.CLI_PROXY_URL || 'http://127.0.0.1:8317',
+    cliProxyManagementKey: process.env.CLI_PROXY_MANAGEMENT_KEY || '',
   };
 }
 
@@ -63,5 +65,6 @@ export function redactLocalConfig(config = {}) {
     ...config,
     dashboardToken: config.dashboardToken ? 'configured' : '',
     aiProxyApiKey: config.aiProxyApiKey ? 'configured' : '',
+    cliProxyManagementKey: config.cliProxyManagementKey ? 'configured' : '',
   };
 }

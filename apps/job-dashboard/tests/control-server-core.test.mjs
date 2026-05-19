@@ -68,6 +68,67 @@ test('control handler reports missing CLIProxyAPI auth key for model tests', asy
   assert.equal(response.body.error, 'ai_proxy_key_missing');
 });
 
+function mockFetch(routes) {
+  return async (url) => {
+    const path = String(url).replace(/^https?:\/\/[^/]+/, '');
+    const match = Object.entries(routes).find(([key]) => path.startsWith(key));
+    const payload = match ? match[1] : { error: 'not_found' };
+    return {
+      ok: Boolean(match),
+      status: match ? 200 : 404,
+      async text() {
+        return JSON.stringify(payload);
+      },
+    };
+  };
+}
+
+test('control handler lists linked AI accounts from CLIProxyAPI', async () => {
+  const handler = createControlHandler({
+    loadConfig: () => ({ cliProxyUrl: 'http://127.0.0.1:8317', cliProxyManagementKey: 'mgmt-key' }),
+    fetchImpl: mockFetch({
+      '/v0/management/auth-files': {
+        files: [
+          { id: 'claude-a.json', name: 'claude-a.json', provider: 'claude', email: 'a@x.com', disabled: false },
+          { id: 'codex-b.json', name: 'codex-b.json', provider: 'codex', email: 'b@x.com', disabled: true },
+        ],
+      },
+    }),
+  });
+
+  const response = await handler({ method: 'GET', url: '/accounts', body: null });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.accounts.length, 2);
+  assert.equal(response.body.accounts[0].provider, 'Anthropic');
+  assert.equal(response.body.accounts[1].provider, 'OpenAI');
+  assert.equal(response.body.accounts[1].disabled, true);
+});
+
+test('control handler starts an OAuth login and returns the auth URL', async () => {
+  const handler = createControlHandler({
+    loadConfig: () => ({ cliProxyManagementKey: 'mgmt-key' }),
+    fetchImpl: mockFetch({
+      '/v0/management/anthropic-auth-url': { status: 'ok', url: 'https://claude.ai/oauth/authorize?x=1', state: 'st-1' },
+    }),
+  });
+
+  const response = await handler({ method: 'POST', url: '/accounts/login', body: { provider: 'anthropic' } });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.provider, 'anthropic');
+  assert.match(response.body.url, /claude\.ai\/oauth/);
+  assert.equal(response.body.state, 'st-1');
+});
+
+test('control handler reports a missing management key for account actions', async () => {
+  const handler = createControlHandler({
+    loadConfig: () => ({ cliProxyManagementKey: '' }),
+  });
+
+  const response = await handler({ method: 'GET', url: '/accounts', body: null });
+  assert.equal(response.status, 424);
+  assert.equal(response.body.error, 'management_key_missing');
+});
+
 test('control CORS headers allow HTTPS dashboard calls into localhost', () => {
   const headers = controlCorsHeaders();
 

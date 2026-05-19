@@ -9,6 +9,7 @@ const state = {
   runnerCommands: [],
   aiModels: [],
   aiGateway: {},
+  accounts: [],
 };
 
 let token = localStorage.getItem('careerOpsDashboardToken') || '';
@@ -36,6 +37,10 @@ document.getElementById('testCheapAiModelsButton').addEventListener('click', tes
 document.querySelectorAll('[data-start-runner]').forEach(button => {
   button.addEventListener('click', () => startRunner(button.dataset.startRunner));
 });
+document.getElementById('refreshAccountsButton').addEventListener('click', loadAccounts);
+document.getElementById('loginAnthropicButton').addEventListener('click', () => startAccountLogin('anthropic'));
+document.getElementById('loginOpenaiButton').addEventListener('click', () => startAccountLogin('openai'));
+document.querySelector('[data-view="accounts"]').addEventListener('click', loadAccounts);
 
 await loadAll();
 await loadRunnerStatus({ alertOnError: false });
@@ -536,6 +541,119 @@ function cleanModelDetail(detail) {
   return String(detail || '')
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, 'Bearer [redacted]')
     .slice(0, 220);
+}
+
+// --- AI accounts -------------------------------------------------------------
+
+async function controlFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body) headers['content-type'] = 'application/json';
+  let response;
+  try {
+    response = await fetch(`${localRunnerUrl}${path}`, {
+      ...options,
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    return { ok: false, status: 0, data: { message: 'Local runner is offline. Launch career-ops.cmd.' } };
+  }
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
+async function loadAccounts() {
+  const target = document.getElementById('accountsList');
+  target.innerHTML = '<p class="muted">Loading accounts...</p>';
+  const { ok, data } = await controlFetch('/accounts');
+  if (!ok) {
+    target.innerHTML = `<p class="error-text">${escapeHtml(data.message || 'Could not load accounts.')}</p>`;
+    return;
+  }
+  state.accounts = data.accounts || [];
+  renderAccounts();
+}
+
+function renderAccounts() {
+  const target = document.getElementById('accountsList');
+  const accounts = state.accounts || [];
+  if (accounts.length === 0) {
+    target.innerHTML = '<p class="muted">No accounts linked yet. Add one above.</p>';
+    return;
+  }
+  target.innerHTML = accounts.map(account => `
+    <article class="item account-row">
+      <div>
+        <strong>${escapeHtml(account.email || account.name)}</strong>
+        <span class="tag ${account.rawProvider === 'claude' ? 'tag-anthropic' : 'tag-openai'}">${escapeHtml(account.provider)}</span>
+        <span class="badge ${account.disabled ? 'badge-off' : 'badge-on'}">${account.disabled ? 'disabled' : 'active'}</span>
+        ${account.failed > 0 ? `<span class="badge badge-warn">${account.failed} recent failures</span>` : ''}
+      </div>
+      <button class="secondary-button" data-account-toggle="${escapeHtml(account.name)}" data-disabled="${account.disabled}">
+        ${account.disabled ? 'Enable' : 'Disable'}
+      </button>
+    </article>
+  `).join('');
+  target.querySelectorAll('[data-account-toggle]').forEach(button => {
+    button.addEventListener('click', () => toggleAccount(
+      button.dataset.accountToggle,
+      button.dataset.disabled !== 'true',
+    ));
+  });
+}
+
+async function toggleAccount(name, disabled) {
+  const { ok, data } = await controlFetch('/accounts/status', {
+    method: 'PATCH',
+    body: { name, disabled },
+  });
+  if (!ok) {
+    alert(data.message || 'Could not update the account.');
+    return;
+  }
+  await loadAccounts();
+}
+
+async function startAccountLogin(provider) {
+  const statusEl = document.getElementById('accountLoginStatus');
+  statusEl.className = 'login-status active';
+  statusEl.textContent = `Requesting ${provider} login...`;
+
+  const { ok, data } = await controlFetch('/accounts/login', { method: 'POST', body: { provider } });
+  if (!ok || !data.url) {
+    statusEl.className = 'login-status error';
+    statusEl.textContent = data.message || 'Could not start the login flow.';
+    return;
+  }
+
+  window.open(data.url, '_blank', 'noopener');
+  statusEl.innerHTML = `A login window opened for <strong>${escapeHtml(provider)}</strong>. `
+    + `Finish signing in there. <a href="${escapeHtml(data.url)}" target="_blank" rel="noopener">Reopen login</a>`;
+
+  const deadline = Date.now() + 4 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    const poll = await controlFetch(`/accounts/login-status?state=${encodeURIComponent(data.state)}`);
+    const status = poll.data?.status;
+    if (status === 'ok') {
+      statusEl.className = 'login-status success';
+      statusEl.textContent = `${provider} account linked.`;
+      await loadAccounts();
+      return;
+    }
+    if (status === 'error') {
+      statusEl.className = 'login-status error';
+      statusEl.textContent = `Login failed: ${poll.data.error || 'unknown error'}`;
+      return;
+    }
+  }
+  statusEl.className = 'login-status error';
+  statusEl.textContent = 'Login timed out. Try again.';
 }
 
 async function localRunner(path, options = {}) {

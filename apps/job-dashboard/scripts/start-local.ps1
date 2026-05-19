@@ -67,6 +67,29 @@ function Resolve-CommandPath {
   return $Names[0]
 }
 
+function Test-CliProxyManagement {
+  param([int]$Port, [string]$Key)
+  try {
+    $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/v0/management/auth-files" `
+      -Headers @{ Authorization = "Bearer $Key" } -UseBasicParsing -TimeoutSec 5
+    return $resp.StatusCode -eq 200
+  } catch {
+    return $false
+  }
+}
+
+function Stop-PortProcess {
+  param([int]$Port)
+  # Note: do not name the loop variable $pid - that is a read-only automatic
+  # variable and assigning to it makes the whole loop throw.
+  try {
+    $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    foreach ($processId in ($conns.OwningProcess | Sort-Object -Unique)) {
+      Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
 function Get-CliProxyApiKey {
   param([string]$Path)
   $configFile = Join-Path $Path "config.yaml"
@@ -87,6 +110,20 @@ if (-not $AiModel) {
   $AiModel = if ($AiProvider -eq "openai") { "gpt-5.4-mini" } else { "SubscriptionGateway/claude-haiku-4-5-20251001" }
 }
 
+# Stable management key for the CLIProxyAPI account API. Reuse the previously
+# generated key when present so restarts keep the same value.
+$managementKey = ""
+if (Test-Path $ConfigPath) {
+  try {
+    $existing = Get-Content -Raw $ConfigPath | ConvertFrom-Json
+    if ($existing.cliProxyManagementKey) { $managementKey = $existing.cliProxyManagementKey }
+  } catch {}
+}
+if (-not $managementKey) {
+  $managementKey = "career-ops-" + ([guid]::NewGuid().ToString("N"))
+}
+$CliProxyUrl = "http://127.0.0.1:$CliProxyPort"
+
 $config = [ordered]@{
   dashboardUrl   = $DashboardUrl
   dashboardToken = ""
@@ -99,6 +136,8 @@ $config = [ordered]@{
   aiDraftMinFit  = "60"
   aiDraftLimit   = "20"
   cliProxyPath   = $CliProxyPath
+  cliProxyUrl    = $CliProxyUrl
+  cliProxyManagementKey = $managementKey
 }
 $config | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -Path $ConfigPath
 Write-Host "Wrote local runner config: $ConfigPath"
@@ -108,9 +147,19 @@ if (-not $NoStart) {
   $node = Resolve-CommandPath @("node.exe", "node")
   $npm = Resolve-CommandPath @("npm.cmd", "npm")
 
-  if ((Test-Path $CliProxyPath) -and -not (Test-LocalPort -Port $CliProxyPort)) {
+  # CLIProxyAPI needs MANAGEMENT_PASSWORD set so the dashboard can manage AI
+  # accounts. If it is already running without it, restart it.
+  $env:MANAGEMENT_PASSWORD = $managementKey
+  $cliProxyRunning = Test-LocalPort -Port $CliProxyPort
+  if ($cliProxyRunning -and -not (Test-CliProxyManagement -Port $CliProxyPort -Key $managementKey)) {
+    Write-Host "Restarting CLIProxyAPI to enable in-dashboard account management..."
+    Stop-PortProcess -Port $CliProxyPort
+    Start-Sleep -Seconds 2
+    $cliProxyRunning = $false
+  }
+  if ((Test-Path $CliProxyPath) -and -not $cliProxyRunning) {
     $go = Resolve-CommandPath @("go.exe", "go")
-    Write-Host "Starting CLIProxyAPI on 127.0.0.1:$CliProxyPort..."
+    Write-Host "Starting CLIProxyAPI on $CliProxyUrl..."
     Start-Process -FilePath $go -ArgumentList @("run", "./cmd/server") -WorkingDirectory $CliProxyPath -WindowStyle Hidden
   }
 
