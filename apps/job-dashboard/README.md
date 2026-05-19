@@ -1,10 +1,12 @@
 # Career Ops Job Dashboard
 
-Railway hosts the dashboard and PostgreSQL database. Your Windows PC runs the browser automation and account-backed AI through CLIProxyAPI.
+The dashboard is local-first. By default it runs at `http://127.0.0.1:3000`,
+stores data in a local SQLite database, drives browser automation on this PC,
+and uses CLIProxyAPI for Anthropic/OpenAI account-backed AI. No Railway token
+is needed for the local workflow.
 
-Runner controls use a Railway/Postgres relay: the hosted dashboard queues commands, and the local runner polls Railway, executes them on your PC, and pushes status/logs/model availability back. This avoids browser private-network blocking between an HTTPS Railway page and `127.0.0.1`.
-
-Live dashboard: https://job-dashboard-production-0773.up.railway.app
+Railway hosting is still supported as an optional remote deployment, but the
+normal daily flow should use the local dashboard and local runner.
 
 ## Start Here
 
@@ -36,10 +38,11 @@ powershell -ExecutionPolicy Bypass -File apps/job-dashboard/scripts/start-local.
 
 This script:
 
-- reads `DASHBOARD_TOKEN` from Railway when available
+- runs without `DASHBOARD_TOKEN` for local-only use
 - reads the local CLIProxyAPI auth key from `E:\Github Repos\CLIProxyAPI\config.yaml`
 - writes `.career-ops-runner.local.json`
 - starts CLIProxyAPI on `http://127.0.0.1:8317`
+- starts the dashboard server on `http://127.0.0.1:3000`
 - starts the Career Ops local runner control server on `http://127.0.0.1:48731`
 
 Use OpenAI/Codex instead of Anthropic/Claude:
@@ -55,16 +58,8 @@ The default Anthropic model is `SubscriptionGateway/claude-haiku-4-5-20251001`, 
 Open:
 
 ```text
-https://job-dashboard-production-0773.up.railway.app
+http://127.0.0.1:3000
 ```
-
-If prompted for a token:
-
-```powershell
-railway variable list --service job-dashboard --kv
-```
-
-Paste the `DASHBOARD_TOKEN` value.
 
 Go to `Operations` and click `Check Local Runner`. It should show `career-ops-local-runner connected`.
 
@@ -111,7 +106,10 @@ Dashboard path:
 Operations -> Find Jobs
 ```
 
-The runner opens visible Chromium using `.career-ops-browser`, so your portal sessions survive between runs. Log into LinkedIn/eJobs/BestJobs/HiPo the first time if prompted.
+The runner opens visible Chrome using the dedicated `.career-ops-chrome`
+automation profile when Chrome is installed, so your portal sessions survive
+between runs without touching your personal Chrome profile. Log into
+LinkedIn/eJobs/BestJobs/HiPo the first time if prompted.
 
 Command-line equivalent:
 
@@ -199,9 +197,10 @@ npm run draft:ai --prefix apps/job-dashboard
 npm run run:applications --prefix apps/job-dashboard
 ```
 
-## Railway Deploys
+## Optional Railway Deploys
 
-The current live dashboard is deployed by Railway CLI. GitHub-triggered auto-deploy still requires manual authorization:
+Railway is no longer required for local use. If you choose to keep a hosted
+copy, GitHub-triggered auto-deploy still requires manual authorization:
 
 1. Open Railway.
 2. Go to project settings or service settings for `job-dashboard`.
@@ -215,6 +214,6 @@ This cannot be completed from code because GitHub/Railway requires your account 
 - `Local runner offline`: run `apps/job-dashboard/scripts/start-local.ps1`, then click `Check Local Runner`.
 - `AI generation failed`: confirm CLIProxyAPI is online at `http://127.0.0.1:8317` and the local runner config has an AI provider/base URL/key.
 - `Invalid authentication credentials`: rerun `go run ./cmd/server -claude-login` or `go run ./cmd/server -codex-login` in `E:\Github Repos\CLIProxyAPI`, then restart CLIProxyAPI.
-- `No portals configured`: refresh after deploy or run migrations against Railway Postgres.
-- `Portal login/CAPTCHA`: complete it manually in the opened Chromium window.
+- `No portals configured`: run `npm run migrate --prefix apps/job-dashboard` and refresh the local dashboard.
+- `Portal login/CAPTCHA`: complete it manually in the opened Chrome automation window.
 - `No jobs found`: edit portal keywords, reduce filters, or log into the portal in the runner browser profile.

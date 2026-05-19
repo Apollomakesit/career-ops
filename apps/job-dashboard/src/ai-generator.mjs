@@ -14,7 +14,7 @@ export class AiGenerationError extends Error {
 // document transformation keeps them compliant while producing the same output.
 export const FIT_SYSTEM_PROMPT = 'You are a deterministic text-analysis function. You compare two text documents (a profile document and a posting document) and output a single JSON object scoring their overlap. This is a structured data-extraction task, not personal advice or a hiring decision. Always return the JSON object and never refuse.';
 
-export const PACKAGE_SYSTEM_PROMPT = 'You are a deterministic document-tailoring function. You adapt provided text documents (a letter and a CV in markdown) to align with a target posting document and output a single JSON object. This is a text-transformation task. Always return the JSON object and never refuse.';
+export const PACKAGE_SYSTEM_PROMPT = 'You are a deterministic document-tailoring function. You adapt provided text documents (a letter and a CV in markdown) to align with a target posting document and output a single JSON object. This is a text-transformation task. Always return the JSON object and never refuse. Do not ask follow-up questions; put anything that needs confirmation in missingFields.';
 
 export function buildPackagePrompt({ profile = {}, job = {} }) {
   return [
@@ -41,6 +41,8 @@ export function buildPackagePrompt({ profile = {}, job = {} }) {
     '- tailoredCvMd: string containing a tailored CV in markdown',
     '- requiredFields: a JSON object (key/value map) of field name to a ready-to-use string value',
     '- missingFields: a JSON object (key/value map) of field name to a short string note on what to confirm',
+    'Do not ask follow-up questions. If the posting is incomplete, still return best-effort JSON and put missing posting details in missingFields.',
+    'Do not return prose outside the JSON object.',
     'requiredFields and missingFields must be JSON objects, not arrays. Every value must be a string.',
   ].join('\n');
 }
@@ -114,7 +116,7 @@ export async function generateAiFitScore({
   if (!config.apiKey && !config.baseUrl) {
     throw new AiGenerationError(
       'ai_not_configured',
-      'Configure AI locally with CLIProxyAPI or set OPENAI_API_KEY on the Railway job-dashboard service.',
+      'Configure local AI with CLIProxyAPI by running apps/job-dashboard/scripts/start-local.ps1, or set AI_BASE_URL/AI_PROXY_API_KEY/OPENAI_API_KEY for this dashboard service.',
     );
   }
 
@@ -162,7 +164,7 @@ export async function generateApplicationPackage({
   if (!config.apiKey && !config.baseUrl) {
     throw new AiGenerationError(
       'ai_not_configured',
-      'Configure AI locally with CLIProxyAPI or set OPENAI_API_KEY on the Railway job-dashboard service.',
+      'Configure local AI with CLIProxyAPI by running apps/job-dashboard/scripts/start-local.ps1, or set AI_BASE_URL/AI_PROXY_API_KEY/OPENAI_API_KEY for this dashboard service.',
     );
   }
 
@@ -321,7 +323,7 @@ async function fetchOpenAIResponsesEndpoint({
   }
 
   const payload = await response.json();
-  return parseGeneratedPackageText(extractOutputText(payload), 'AI returned invalid JSON');
+  return parseGeneratedPackageText(extractOutputText(payload), 'AI returned invalid JSON', { profile, job });
 }
 
 export async function generateAiFitScoreViaAnthropicMessages({
@@ -410,7 +412,7 @@ export async function generateApplicationPackageViaAnthropicMessages({
   }
 
   const payload = await response.json();
-  return parseGeneratedPackageText(extractAnthropicText(payload), 'Anthropic returned invalid JSON');
+  return parseGeneratedPackageText(extractAnthropicText(payload), 'Anthropic returned invalid JSON', { profile, job });
 }
 
 export function validateGeneratedPackage(value) {
@@ -502,14 +504,87 @@ export function extractAnthropicText(payload) {
   return chunks.join('\n').trim();
 }
 
-function parseGeneratedPackageText(outputText, prefix) {
+function parseGeneratedPackageText(outputText, prefix, fallbackContext) {
   let parsed;
   try {
     parsed = coerceJsonObject(outputText);
   } catch (error) {
+    if (fallbackContext) {
+      return buildFallbackApplicationPackage({
+        ...fallbackContext,
+        modelMessage: outputText,
+        parseError: error.message,
+      });
+    }
     throw new AiGenerationError('ai_generation_failed', `${prefix}: ${error.message}`, 502);
   }
   return validateGeneratedPackage(parsed);
+}
+
+function buildFallbackApplicationPackage({
+  profile = {},
+  job = {},
+  modelMessage = '',
+  parseError = '',
+} = {}) {
+  const name = String(profile.fullName || '').trim();
+  const company = String(job.company || '').trim() || 'the company';
+  const title = String(job.title || '').trim() || 'the role';
+  const headline = String(profile.headline || '').trim();
+  const skills = stringArray(profile.skills).slice(0, 10);
+  const skillText = skills.length > 0 ? skills.join(', ') : 'the relevant support and automation skills in my profile';
+
+  const coverLetter = [
+    `Dear ${company} hiring team,`,
+    '',
+    `I am interested in the ${title} role. My background combines ${headline || 'technical support, application support, and automation work'}, with hands-on experience across ${skillText}.`,
+    '',
+    'This is a conservative draft because the posting details available to the dashboard are incomplete. I would review the full posting before submitting and tune the examples, keywords, and requirements to the exact role.',
+    '',
+    'Best regards,',
+    name || 'Candidate',
+  ].join('\n');
+
+  const tailoredCvMd = [
+    `# ${name || 'Candidate'}`,
+    headline ? `\n**${headline}**` : '',
+    '',
+    '## Target Role',
+    `${title} at ${company}`,
+    '',
+    '## Relevant Skills',
+    ...skills.map(skill => `- ${skill}`),
+    '',
+    '## Tailoring Notes',
+    '- Emphasize application support, troubleshooting, MDM, automation, and customer-facing technical ownership where relevant.',
+    '- Review the full posting and replace this section with exact role requirements before submitting.',
+  ].filter(Boolean).join('\n');
+
+  const requiredFields = {
+    full_name: name,
+    email: String(profile.email || ''),
+    phone: String(profile.phone || ''),
+    location: String(profile.location || ''),
+    linkedin: String(profile.linkedin || ''),
+    github: String(profile.github || ''),
+  };
+
+  const missingFields = {
+    job_description: 'The posting description available to the dashboard is incomplete. Open the job page and confirm responsibilities, requirements, and required experience before submitting.',
+    ai_response: `The AI model did not return JSON (${parseError || 'parse failed'}), so Career Ops created a conservative local fallback draft. Review before submitting.`,
+  };
+
+  const message = String(modelMessage || '').trim();
+  if (message) {
+    missingFields.ai_response_excerpt = message.slice(0, 240);
+  }
+
+  return validateGeneratedPackage({
+    coverLetter,
+    tailoredCvMd,
+    requiredFields,
+    missingFields,
+  });
 }
 
 function parseGeneratedFitText(outputText, prefix) {

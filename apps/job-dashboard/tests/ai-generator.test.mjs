@@ -175,6 +175,46 @@ test('can target a CLIProxyAPI Anthropic messages endpoint', async () => {
   assert.equal(result.coverLetter, 'Anthropic cover letter');
 });
 
+test('creates a conservative fallback package when the model asks for more posting details instead of JSON', async () => {
+  const result = await generateApplicationPackageViaAnthropicMessages({
+    profile,
+    job: {
+      ...job,
+      company: 'EveryMatrix',
+      title: 'Junior Application Support Engineer',
+      description: 'LinkedIn preview only.',
+    },
+    apiKey: 'local-proxy-key',
+    model: 'SubscriptionGateway/claude-haiku-4-5-20251001',
+    baseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          content: [{
+            type: 'text',
+            text: 'I need to see the full job posting description before I can tailor this.',
+          }],
+        };
+      },
+    }),
+  });
+
+  assert.match(result.coverLetter, /EveryMatrix/);
+  assert.match(result.tailoredCvMd, /Ioan Stefan Vlaicu/);
+  assert.equal(result.requiredFields.full_name, 'Ioan Stefan Vlaicu');
+  assert.match(result.missingFields.job_description, /incomplete/i);
+  assert.match(result.missingFields.ai_response, /did not return JSON/i);
+});
+
+test('package prompt tells models to use missingFields instead of asking follow-up questions', () => {
+  const prompt = buildPackagePrompt({ profile, job });
+
+  assert.match(prompt, /Do not ask follow-up questions/);
+  assert.match(prompt, /missingFields/);
+});
+
 test('can generate an AI fit score through an OpenAI-compatible Responses endpoint', async () => {
   const calls = [];
   const result = await generateAiFitScoreViaOpenAIResponses({

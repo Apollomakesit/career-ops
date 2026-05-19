@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDashboardServer } from '../src/server.mjs';
+import { createDashboardServer, resolveDashboardServices } from '../src/server.mjs';
 
 test('serves health response through HTTP', async () => {
   const server = createDashboardServer({
@@ -70,6 +70,65 @@ test('serves dashboard shell while protecting API data when token is configured'
       process.env.DASHBOARD_TOKEN = previousToken;
     }
   }
+});
+
+test('resolves AI services from local runner config when running without DATABASE_URL', () => {
+  const services = resolveDashboardServices({
+    env: {
+      DATABASE_URL: '',
+    },
+    loadConfig: () => ({
+      aiProvider: 'anthropic',
+      aiBaseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+      aiModel: 'SubscriptionGateway/claude-haiku-4-5-20251001',
+      aiProxyApiKey: 'local-proxy-key',
+    }),
+  });
+
+  assert.equal(services.aiProvider, 'anthropic');
+  assert.equal(services.aiBaseUrl, 'http://127.0.0.1:8317/api/provider/anthropic/v1');
+  assert.equal(services.aiModel, 'SubscriptionGateway/claude-haiku-4-5-20251001');
+  assert.equal(services.aiApiKey, 'local-proxy-key');
+});
+
+test('does not point a hosted DATABASE_URL deployment at localhost CLIProxyAPI by default', () => {
+  const services = resolveDashboardServices({
+    env: {
+      DATABASE_URL: 'postgresql://railway.internal/db',
+    },
+    loadConfig: () => ({
+      aiProvider: 'anthropic',
+      aiBaseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+      aiModel: 'SubscriptionGateway/claude-haiku-4-5-20251001',
+      aiProxyApiKey: 'local-proxy-key',
+    }),
+  });
+
+  assert.equal(services.aiBaseUrl, undefined);
+  assert.equal(services.aiApiKey, undefined);
+});
+
+test('explicit AI env configuration wins over local runner config', () => {
+  const services = resolveDashboardServices({
+    env: {
+      DATABASE_URL: 'postgresql://railway.internal/db',
+      AI_PROVIDER: 'openai',
+      AI_BASE_URL: 'https://gateway.example/openai/v1',
+      AI_MODEL: 'gpt-5.4-mini',
+      AI_PROXY_API_KEY: 'env-key',
+    },
+    loadConfig: () => ({
+      aiProvider: 'anthropic',
+      aiBaseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+      aiModel: 'SubscriptionGateway/claude-haiku-4-5-20251001',
+      aiProxyApiKey: 'local-proxy-key',
+    }),
+  });
+
+  assert.equal(services.aiProvider, 'openai');
+  assert.equal(services.aiBaseUrl, 'https://gateway.example/openai/v1');
+  assert.equal(services.aiModel, 'gpt-5.4-mini');
+  assert.equal(services.aiApiKey, 'env-key');
 });
 
 function listen(server) {

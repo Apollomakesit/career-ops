@@ -8,7 +8,7 @@ const defaultConfigPath = path.join(repoRoot, '.career-ops-runner.local.json');
 
 export function defaultLocalConfig() {
   return {
-    dashboardUrl: process.env.DASHBOARD_URL || 'https://job-dashboard-production-0773.up.railway.app',
+    dashboardUrl: process.env.DASHBOARD_URL || 'http://127.0.0.1:3000',
     dashboardToken: process.env.DASHBOARD_TOKEN || '',
     browserProfile: process.env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-browser',
     browserChannel: process.env.BROWSER_CHANNEL || '',

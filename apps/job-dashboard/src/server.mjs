@@ -8,11 +8,17 @@ import { fileURLToPath } from 'node:url';
 import { createPool } from './db.mjs';
 import { migrate } from './schema.mjs';
 import { createPostgresStore, dispatchApi } from './routes.mjs';
+import { resolveAiRuntimeConfig } from './ai-generator.mjs';
+import { envFromLocalConfig, loadLocalConfig } from '../runner/local-config.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', 'public');
 
-export function createDashboardServer({ store, publicRoot = publicDir } = {}) {
+export function createDashboardServer({
+  store,
+  publicRoot = publicDir,
+  services = resolveDashboardServices(),
+} = {}) {
   return createServer(async (req, res) => {
     if (requiresToken(req)) {
       writeJson(res, 401, { error: 'unauthorized' });
@@ -21,13 +27,45 @@ export function createDashboardServer({ store, publicRoot = publicDir } = {}) {
 
     if (req.url?.startsWith('/api/')) {
       const body = await readJsonBody(req);
-      const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store);
+      const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store, services);
       writeJson(res, response.status, response.body);
       return;
     }
 
     serveStatic(req, res, publicRoot);
   });
+}
+
+export function resolveDashboardServices({
+  env = process.env,
+  loadConfig = loadLocalConfig,
+} = {}) {
+  const envValues = nonEmptyEnv(env);
+  const shouldReadLocalConfig = !envValues.DATABASE_URL || envValues.CAREER_OPS_LOCAL === '1';
+  const aiEnv = shouldReadLocalConfig
+    ? {
+        ...envFromLocalConfig(loadConfig()),
+        ...envValues,
+      }
+    : envValues;
+  const runtime = resolveAiRuntimeConfig(aiEnv);
+
+  if (!runtime.apiKey && !runtime.baseUrl) {
+    return {};
+  }
+
+  return {
+    aiProvider: runtime.provider,
+    aiApiKey: runtime.apiKey,
+    aiModel: runtime.model,
+    aiBaseUrl: runtime.baseUrl,
+  };
+}
+
+function nonEmptyEnv(env) {
+  return Object.fromEntries(
+    Object.entries(env || {}).filter(([, value]) => value !== undefined && value !== null && String(value) !== ''),
+  );
 }
 
 function serveStatic(req, res, publicRoot) {
