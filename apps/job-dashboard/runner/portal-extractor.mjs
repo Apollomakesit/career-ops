@@ -31,6 +31,10 @@ const navigationWords = [
   'vezi job',
   'home',
   'acasa',
+  'myhipo',
+  'adauga cv',
+  'adaugă cv',
+  'top talents romania',
 ];
 
 // Promoted-listing badges that appear as their own card line before the company.
@@ -133,7 +137,12 @@ function normalizeLink({ portal, sourceUrl, link, keyword }) {
 
 function looksLikeJobUrl(portal, url) {
   const patterns = portalUrlPatterns[portal] || [];
-  return patterns.some(pattern => pattern.test(url)) && !looksLikeSearchOnlyUrl(portal, url);
+  if (!patterns.some(pattern => pattern.test(url))) return false;
+  if (looksLikeSearchOnlyUrl(portal, url)) return false;
+  // HiPo's job-URL pattern also covers recruitment-event pages (e.g. the
+  // "Top Talents Romania" widget linked from every page); exclude those.
+  if (portal === 'hipo' && /\/(inscrie|top-talents|eveniment)/i.test(url)) return false;
+  return true;
 }
 
 function looksLikeSearchOnlyUrl(portal, url) {

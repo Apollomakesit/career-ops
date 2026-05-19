@@ -80,12 +80,20 @@ Command-line equivalent:
 npm run test:models --prefix apps/job-dashboard
 ```
 
-If OpenAI/Codex models show `auth_unavailable`, refresh that OAuth session:
+Interpreting the model test results:
 
-```powershell
-cd "E:\Github Repos\CLIProxyAPI"
-go run ./cmd/server -codex-login
-```
+- `auth_unavailable` / `Invalid authentication credentials`: the OAuth session
+  expired. Refresh it, then restart CLIProxyAPI:
+
+  ```powershell
+  cd "E:\Github Repos\CLIProxyAPI"
+  go run ./cmd/server -codex-login
+  ```
+
+- `usage_limit_reached`: the account is authenticated but the subscription
+  plan's quota is exhausted. This is **not** an auth problem — re-logging in
+  will not help. Wait for the reset window (the error includes `resets_at`)
+  or switch to the other provider in the dashboard model selector.
 
 ### 4. Configure profile and portals
 
