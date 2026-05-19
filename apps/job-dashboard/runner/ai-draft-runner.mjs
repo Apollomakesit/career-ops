@@ -3,13 +3,16 @@ import 'dotenv/config';
 
 import { createRunnerClient } from './api-client.mjs';
 import { draftPackagesForJobs } from './ai-draft-runner-core.mjs';
+import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
 import { generateApplicationPackage, resolveAiRuntimeConfig } from '../src/ai-generator.mjs';
 
-const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:3000';
-const token = process.env.DASHBOARD_TOKEN || '';
-const minFitScore = Number(process.env.AI_DRAFT_MIN_FIT || 60);
-const limit = Number(process.env.AI_DRAFT_LIMIT || 20);
-const aiConfig = resolveAiRuntimeConfig();
+const localEnv = envFromLocalConfig(loadLocalConfig());
+const env = { ...localEnv, ...process.env };
+const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
+const token = env.DASHBOARD_TOKEN || '';
+const minFitScore = Number(env.AI_DRAFT_MIN_FIT || 60);
+const limit = Number(env.AI_DRAFT_LIMIT || 20);
+const aiConfig = resolveAiRuntimeConfig(env);
 
 const client = createRunnerClient({ baseUrl: dashboardUrl, token });
 

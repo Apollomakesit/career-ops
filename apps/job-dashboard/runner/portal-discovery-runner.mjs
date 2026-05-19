@@ -6,15 +6,18 @@ import { createInterface } from 'node:readline/promises';
 import { chromium } from 'playwright';
 
 import { createRunnerClient } from './api-client.mjs';
+import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
 import { buildPortalSearchPlan, defaultPortalRows, keywordsFromProfile, normalizePortalRows, supportedPortals } from './portal-config.mjs';
 import { dedupeJobs, extractJobsFromPage } from './portal-extractor.mjs';
 
-const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:3000';
-const token = process.env.DASHBOARD_TOKEN || '';
-const userDataDir = process.env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-browser';
-const maxJobs = Number(process.env.PORTAL_DISCOVERY_MAX_JOBS || 80);
-const perPortalLimit = Number(process.env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6);
-const requestedPortals = (process.env.PORTAL_DISCOVERY_PORTALS || supportedPortals.join(','))
+const localEnv = envFromLocalConfig(loadLocalConfig());
+const env = { ...localEnv, ...process.env };
+const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
+const token = env.DASHBOARD_TOKEN || '';
+const userDataDir = env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-browser';
+const maxJobs = Number(env.PORTAL_DISCOVERY_MAX_JOBS || 80);
+const perPortalLimit = Number(env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6);
+const requestedPortals = (env.PORTAL_DISCOVERY_PORTALS || supportedPortals.join(','))
   .split(',')
   .map(item => item.trim().toLowerCase())
   .filter(Boolean);

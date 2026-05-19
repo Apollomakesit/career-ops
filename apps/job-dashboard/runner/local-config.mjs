@@ -23,9 +23,10 @@ export function defaultLocalConfig() {
 export function loadLocalConfig(configPath = defaultConfigPath) {
   if (!existsSync(configPath)) return defaultLocalConfig();
   try {
+    const text = readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
     return {
       ...defaultLocalConfig(),
-      ...JSON.parse(readFileSync(configPath, 'utf8')),
+      ...JSON.parse(text),
     };
   } catch {
     return defaultLocalConfig();
