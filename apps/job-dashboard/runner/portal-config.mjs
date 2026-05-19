@@ -9,25 +9,57 @@ const defaultKeywords = [
   'AI Automation Engineer',
 ];
 
+export const defaultPortalRows = supportedPortals.map(portal => ({
+  portal,
+  profileUrl: portal === 'linkedin' ? 'https://www.linkedin.com/in/ioanstefanvlaicu/' : '',
+  usernameEmail: '',
+  notes: defaultPortalNotes(portal),
+  fieldHints: {
+    discovery: {
+      enabled: true,
+      keywords: defaultKeywords,
+    },
+    fieldAliases: {},
+  },
+}));
+
 export function buildPortalSearchPlan({
   keywords = defaultKeywords,
   portals = supportedPortals,
   perPortalLimit = Number(process.env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6),
 } = {}) {
-  const selectedKeywords = unique(keywords).slice(0, perPortalLimit);
+  const portalRows = normalizePortalRows(portals);
   const plan = [];
 
-  for (const portal of portals.filter(item => supportedPortals.includes(item))) {
+  for (const row of portalRows) {
+    const selectedKeywords = keywordsForPortal(row, keywords).slice(0, perPortalLimit);
     for (const keyword of selectedKeywords) {
       plan.push({
-        portal,
+        portal: row.portal,
         keyword,
-        url: searchUrlFor(portal, keyword),
+        url: searchUrlFor(row.portal, keyword),
       });
     }
   }
 
   return plan;
+}
+
+export function normalizePortalRows(portals = supportedPortals) {
+  const rows = portals.length > 0 ? portals : defaultPortalRows;
+  return rows
+    .map(item => {
+      if (typeof item === 'string') {
+        return { portal: item, fieldHints: {} };
+      }
+      return {
+        ...item,
+        portal: String(item.portal || '').trim().toLowerCase(),
+        fieldHints: item.fieldHints || item.field_hints || {},
+      };
+    })
+    .filter(item => supportedPortals.includes(item.portal))
+    .filter(item => item.fieldHints?.discovery?.enabled !== false);
 }
 
 export function searchUrlFor(portal, keyword) {
@@ -70,6 +102,11 @@ export function keywordsFromProfile(profile = {}) {
   ]).filter(Boolean);
 }
 
+function keywordsForPortal(row, fallbackKeywords) {
+  const configured = row.fieldHints?.discovery?.keywords || [];
+  return unique(configured.length > 0 ? configured : fallbackKeywords);
+}
+
 function unique(values) {
   return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];
 }
@@ -77,4 +114,11 @@ function unique(values) {
 function capitalize(value) {
   if (/^[A-Z0-9]{2,}$/.test(value)) return value;
   return value ? value[0].toUpperCase() + value.slice(1).toLowerCase() : value;
+}
+
+function defaultPortalNotes(portal) {
+  if (portal === 'ejobs') return 'Romanian job board discovery and assisted application hints.';
+  if (portal === 'bestjobs') return 'BestJobs Romania discovery and assisted application hints.';
+  if (portal === 'hipo') return 'HiPo Romania discovery and assisted application hints.';
+  return 'LinkedIn Romania discovery; login and final submit stay manual.';
 }

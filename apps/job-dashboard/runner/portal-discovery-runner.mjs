@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline/promises';
 import { chromium } from 'playwright';
 
 import { createRunnerClient } from './api-client.mjs';
-import { buildPortalSearchPlan, keywordsFromProfile, supportedPortals } from './portal-config.mjs';
+import { buildPortalSearchPlan, defaultPortalRows, keywordsFromProfile, normalizePortalRows, supportedPortals } from './portal-config.mjs';
 import { dedupeJobs, extractJobsFromPage } from './portal-extractor.mjs';
 
 const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:3000';
@@ -20,10 +20,15 @@ const requestedPortals = (process.env.PORTAL_DISCOVERY_PORTALS || supportedPorta
   .filter(Boolean);
 
 const client = createRunnerClient({ baseUrl: dashboardUrl, token });
-const profile = await client.fetchProfile();
+const [profile, dashboardPortals] = await Promise.all([
+  client.fetchProfile(),
+  client.fetchPortals().catch(() => []),
+]);
+const portalRows = normalizePortalRows(dashboardPortals.length > 0 ? dashboardPortals : defaultPortalRows)
+  .filter(item => requestedPortals.includes(item.portal));
 const plan = buildPortalSearchPlan({
   keywords: keywordsFromProfile(profile),
-  portals: requestedPortals,
+  portals: portalRows,
   perPortalLimit,
 });
 

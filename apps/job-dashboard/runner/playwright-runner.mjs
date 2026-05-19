@@ -13,6 +13,7 @@ const userDataDir = process.env.CAREER_OPS_BROWSER_PROFILE || '.career-ops-brows
 const client = createRunnerClient({ baseUrl: dashboardUrl, token });
 const packages = await client.fetchApprovedPackages();
 const profile = await client.fetchProfile().catch(() => ({}));
+const portals = await client.fetchPortals().catch(() => []);
 
 if (packages.length === 0) {
   console.log('No approved packages waiting for the local runner.');
@@ -44,7 +45,10 @@ try {
       profile,
       coverLetter: pkg.coverLetter || '',
     });
-    await fillKnownFields(page, fields, missingFields);
+    const portalConfig = portals.find(item => item.portal === pkg.portal) || {};
+    await fillKnownFields(page, fields, missingFields, {
+      fieldHints: portalConfig.fieldHints || {},
+    });
 
     await client.markRunnerStatus(pkg.id, {
       runnerStatus: Object.keys(missingFields).length > 0 ? 'needs_missing_fields' : 'ready_for_user_submit',

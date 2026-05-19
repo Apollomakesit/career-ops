@@ -68,6 +68,35 @@ test('imports discovered jobs into the dashboard', async () => {
   assert.equal(JSON.parse(calls[0].options.body).portal, 'ejobs');
 });
 
+test('fetches portal configuration and creates AI-generated packages', async () => {
+  const calls = [];
+  const client = createRunnerClient({
+    baseUrl: 'https://dashboard.example/',
+    token: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      if (url.endsWith('/api/portals')) return jsonResponse([{ portal: 'ejobs' }]);
+      if (url.endsWith('/api/packages')) return jsonResponse([]);
+      if (url.endsWith('/api/jobs/job-1/package')) return jsonResponse({ id: 'pkg-1' });
+      return jsonResponse([]);
+    },
+  });
+
+  const portals = await client.fetchPortals();
+  const packages = await client.fetchPackages();
+  const created = await client.createPackage('job-1', {
+    coverLetter: 'Hello',
+    tailoredCvMd: '# CV',
+    requiredFields: {},
+    missingFields: {},
+  });
+
+  assert.equal(portals[0].portal, 'ejobs');
+  assert.deepEqual(packages, []);
+  assert.equal(created.id, 'pkg-1');
+  assert.equal(calls[2].options.method, 'POST');
+});
+
 function jsonResponse(body) {
   return {
     ok: true,

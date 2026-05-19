@@ -4,9 +4,12 @@ const state = {
   jobs: [],
   packages: [],
   events: [],
+  runnerStatus: {},
+  runnerConfig: {},
 };
 
 let token = localStorage.getItem('careerOpsDashboardToken') || '';
+const localRunnerUrl = localStorage.getItem('careerOpsLocalRunnerUrl') || 'http://127.0.0.1:48731';
 
 document.querySelectorAll('.nav-button').forEach(button => {
   button.addEventListener('click', () => {
@@ -21,8 +24,15 @@ document.getElementById('refreshButton').addEventListener('click', loadAll);
 document.getElementById('newJobButton').addEventListener('click', () => document.getElementById('jobDialog').showModal());
 document.getElementById('createJobButton').addEventListener('click', createJob);
 document.getElementById('saveProfileButton').addEventListener('click', saveProfile);
+document.getElementById('connectRunnerButton').addEventListener('click', () => loadRunnerStatus({ alertOnError: true }));
+document.getElementById('saveRunnerConfigButton').addEventListener('click', saveRunnerConfig);
+document.querySelectorAll('[data-start-runner]').forEach(button => {
+  button.addEventListener('click', () => startRunner(button.dataset.startRunner));
+});
 
 await loadAll();
+await loadRunnerStatus({ alertOnError: false });
+setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
 
 async function loadAll() {
   const [profile, portals, jobs, packagesList, events] = await Promise.all([
@@ -78,14 +88,30 @@ function renderProfile() {
 }
 
 function renderPortals() {
-  document.getElementById('portalsList').innerHTML = state.portals.map(portal => `
-    <div class="item">
-      <h3>${escapeHtml(portal.portal)}</h3>
-      <p><strong>Email:</strong> ${escapeHtml(portal.usernameEmail || '')}</p>
-      <p><strong>Profile:</strong> ${escapeHtml(portal.profileUrl || '')}</p>
-      <p>${escapeHtml(portal.notes || '')}</p>
+  document.getElementById('portalsList').innerHTML = state.portals.map(portal => {
+    const hints = portal.fieldHints || {};
+    const discovery = hints.discovery || {};
+    return `
+    <div class="item portal-card" data-portal-card="${escapeHtml(portal.portal)}">
+      <div class="item-head">
+        <h3>${escapeHtml(portal.portal)}</h3>
+        <button class="primary-button" data-save-portal="${escapeHtml(portal.portal)}">Save</button>
+      </div>
+      <div class="form-grid compact">
+        <label>Enabled<input data-portal-enabled type="checkbox" ${discovery.enabled === false ? '' : 'checked'}></label>
+        <label>Login email<input data-portal-email value="${escapeHtml(portal.usernameEmail || '')}"></label>
+        <label class="wide">Profile URL<input data-portal-profile value="${escapeHtml(portal.profileUrl || '')}"></label>
+        <label class="wide">Discovery keywords<textarea data-portal-keywords>${escapeHtml((discovery.keywords || []).join('\n'))}</textarea></label>
+        <label class="wide">Field hints JSON<textarea data-portal-hints>${escapeHtml(JSON.stringify({ ...hints, discovery: undefined }, null, 2))}</textarea></label>
+        <label class="wide">Notes<textarea data-portal-notes>${escapeHtml(portal.notes || '')}</textarea></label>
+      </div>
     </div>
-  `).join('') || '<div class="item"><h3>No portals configured</h3><p>Add eJobs, BestJobs, Hipo, and LinkedIn portal hints from the profile setup.</p></div>';
+  `;
+  }).join('') || '<div class="item"><h3>No portals configured</h3><p>Run the latest migration or refresh after deploy; eJobs, BestJobs, HiPo, and LinkedIn are seeded automatically.</p></div>';
+
+  document.querySelectorAll('[data-save-portal]').forEach(button => {
+    button.addEventListener('click', () => savePortal(button.dataset.savePortal, button));
+  });
 }
 
 function renderPackages() {
@@ -176,6 +202,110 @@ async function saveProfile() {
   await loadAll();
 }
 
+async function savePortal(portal, button) {
+  const card = button.closest('[data-portal-card]');
+  const hints = parseJson(card.querySelector('[data-portal-hints]').value, {});
+  hints.discovery = {
+    enabled: card.querySelector('[data-portal-enabled]').checked,
+    keywords: textLines(card.querySelector('[data-portal-keywords]').value),
+  };
+
+  button.disabled = true;
+  try {
+    await api(`/api/portals/${portal}`, {
+      method: 'PUT',
+      body: {
+        portal,
+        profileUrl: card.querySelector('[data-portal-profile]').value.trim(),
+        usernameEmail: card.querySelector('[data-portal-email]').value.trim(),
+        notes: card.querySelector('[data-portal-notes]').value.trim(),
+        fieldHints: hints,
+      },
+    });
+    await loadAll();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadRunnerStatus({ alertOnError = false } = {}) {
+  try {
+    const [health, status, config] = await Promise.all([
+      localRunner('/health'),
+      localRunner('/status'),
+      localRunner('/config'),
+    ]);
+    state.runnerStatus = status;
+    state.runnerConfig = config;
+    document.getElementById('localRunnerStatus').textContent = `${health.service} connected`;
+    renderRunnerConfig(config);
+    renderRunnerStatus(status);
+    await loadRunnerLogs();
+  } catch (error) {
+    document.getElementById('localRunnerStatus').textContent = 'Local runner offline';
+    renderRunnerStatus({});
+    if (alertOnError) alert(`Local runner is not reachable at ${localRunnerUrl}. Start it with npm run runner:control --prefix apps/job-dashboard`);
+  }
+}
+
+async function loadRunnerLogs(runner = 'discover') {
+  try {
+    const logs = await localRunner(`/logs?runner=${encodeURIComponent(runner)}`);
+    document.getElementById('runnerLogs').innerHTML = `<code>${escapeHtml(logs.map(item => `[${item.at}] ${item.stream}: ${item.message}`).join('\n') || 'No logs yet.')}</code>`;
+  } catch {
+    document.getElementById('runnerLogs').innerHTML = '<code>No local runner logs yet.</code>';
+  }
+}
+
+function renderRunnerConfig(config = {}) {
+  setValue('runnerDashboardUrl', config.dashboardUrl || window.location.origin);
+  setValue('runnerDashboardToken', config.dashboardToken || token || '');
+  setValue('runnerAiProvider', config.aiProvider || 'openai');
+  setValue('runnerAiModel', config.aiModel || 'gpt-5.2');
+  setValue('runnerAiBaseUrl', config.aiBaseUrl || 'http://127.0.0.1:8317/api/provider/openai/v1');
+  setValue('runnerAiProxyApiKey', config.aiProxyApiKey || '');
+  setValue('runnerAiDraftMinFit', config.aiDraftMinFit || '60');
+  setValue('runnerAiDraftLimit', config.aiDraftLimit || '20');
+}
+
+function renderRunnerStatus(status = {}) {
+  const names = ['discover', 'draft-ai', 'applications'];
+  document.getElementById('runnerCards').innerHTML = names.map(name => {
+    const run = status[name] || { status: 'idle', logs: [] };
+    return `
+      <button class="runner-card" data-runner-logs="${name}">
+        <strong>${escapeHtml(name)}</strong>
+        <span>${escapeHtml(run.status || 'idle')}</span>
+        <small>${escapeHtml(run.logs?.at(-1)?.message || '')}</small>
+      </button>
+    `;
+  }).join('');
+
+  document.querySelectorAll('[data-runner-logs]').forEach(button => {
+    button.addEventListener('click', () => loadRunnerLogs(button.dataset.runnerLogs));
+  });
+}
+
+async function saveRunnerConfig() {
+  const config = {
+    dashboardUrl: value('runnerDashboardUrl') || window.location.origin,
+    dashboardToken: value('runnerDashboardToken') || token || '',
+    aiProvider: value('runnerAiProvider'),
+    aiModel: value('runnerAiModel'),
+    aiBaseUrl: value('runnerAiBaseUrl'),
+    aiProxyApiKey: value('runnerAiProxyApiKey'),
+    aiDraftMinFit: value('runnerAiDraftMinFit') || '60',
+    aiDraftLimit: value('runnerAiDraftLimit') || '20',
+  };
+  await localRunner('/config', { method: 'PUT', body: config });
+  await loadRunnerStatus({ alertOnError: true });
+}
+
+async function startRunner(runner) {
+  await localRunner('/start', { method: 'POST', body: { runner } });
+  await loadRunnerStatus({ alertOnError: true });
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -222,7 +352,34 @@ function setValue(id, current) {
 }
 
 function lines(id) {
-  return value(id).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return textLines(value(id));
+}
+
+function textLines(text) {
+  return String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
+
+function parseJson(text, fallback) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return fallback;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    alert('Field hints must be valid JSON.');
+    return fallback;
+  }
+}
+
+async function localRunner(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body) headers['content-type'] = 'application/json';
+  const response = await fetch(`${localRunnerUrl}${path}`, {
+    ...options,
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if (!response.ok) throw new Error(`Local runner ${response.status}`);
+  return response.json();
 }
 
 function scoreClass(score) {

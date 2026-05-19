@@ -50,8 +50,10 @@ export async function dispatchApi(request, store, services = {}) {
         const generated = await generateApplicationPackage({
           profile,
           job,
-          apiKey: services.openaiApiKey,
-          model: services.openaiModel,
+          provider: services.aiProvider,
+          apiKey: services.aiApiKey ?? services.openaiApiKey,
+          model: services.aiModel ?? services.openaiModel,
+          baseUrl: services.aiBaseUrl,
           fetchImpl: services.fetchImpl,
         });
         return json(201, await store.createPackage(segments[2], generated));

@@ -35,7 +35,7 @@ test('serves dashboard HTML', async () => {
     const html = await response.text();
     assert.equal(response.status, 200);
     assert.match(html, /Career Ops Dashboard/);
-    assert.match(html, /Portal Discovery Runner/);
+    assert.match(html, /Local Runner Control/);
   } finally {
     await close(server);
   }

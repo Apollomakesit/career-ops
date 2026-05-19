@@ -28,25 +28,29 @@ export function buildRequiredFields({ packageFields = {}, profile = {}, coverLet
   };
 }
 
-export function buildFieldCandidates(label) {
-  return fieldAliases[label] || [label, humanize(label)];
+export function buildFieldCandidates(label, fieldHints = {}) {
+  return unique([
+    ...(fieldHints.fieldAliases?.[label] || []),
+    ...(fieldHints.fields?.[label] || []),
+    ...(fieldAliases[label] || [label, humanize(label)]),
+  ]);
 }
 
-export async function fillKnownFields(page, fields, missingFields = {}) {
+export async function fillKnownFields(page, fields, missingFields = {}, options = {}) {
   for (const [label, value] of Object.entries(fields)) {
     if (!value) {
       missingFields[label] = 'Required value is empty.';
       continue;
     }
 
-    const filled = await tryFillField(page, label, value);
+    const filled = await tryFillField(page, label, value, options.fieldHints || {});
     if (!filled) missingFields[label] = 'Could not locate a matching field on the page.';
   }
   return missingFields;
 }
 
-export async function tryFillField(page, label, value) {
-  for (const candidate of buildFieldCandidates(label)) {
+export async function tryFillField(page, label, value, fieldHints = {}) {
+  for (const candidate of buildFieldCandidates(label, fieldHints)) {
     const locators = [
       page.getByLabel(candidate),
       page.getByPlaceholder(candidate),
@@ -82,4 +86,8 @@ function humanize(value) {
 
 function cssEscape(value) {
   return String(value).replace(/["\\]/g, '\\$&');
+}
+
+function unique(values) {
+  return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];
 }

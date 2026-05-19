@@ -43,6 +43,38 @@ CREATE TABLE IF NOT EXISTS portal_credentials (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+INSERT INTO portal_credentials (portal, profile_url, username_email, field_hints, notes)
+VALUES
+  (
+    'ejobs',
+    '',
+    '',
+    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    'Romanian job board discovery and assisted application hints.'
+  ),
+  (
+    'bestjobs',
+    '',
+    '',
+    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    'BestJobs Romania discovery and assisted application hints.'
+  ),
+  (
+    'hipo',
+    '',
+    '',
+    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    'HiPo Romania discovery and assisted application hints.'
+  ),
+  (
+    'linkedin',
+    'https://www.linkedin.com/in/ioanstefanvlaicu/',
+    '',
+    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    'LinkedIn Romania discovery; login and final submit stay manual.'
+  )
+ON CONFLICT (portal) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   url TEXT NOT NULL UNIQUE,

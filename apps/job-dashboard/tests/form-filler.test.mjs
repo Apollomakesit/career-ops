@@ -15,6 +15,17 @@ test('builds common aliases for application fields', () => {
   assert.ok(candidates.includes('Email address'));
 });
 
+test('extends field candidates with portal-specific hints', () => {
+  const candidates = buildFieldCandidates('salary_expectation', {
+    fieldAliases: {
+      salary_expectation: ['Pretentii salariale nete'],
+    },
+  });
+
+  assert.equal(candidates[0], 'Pretentii salariale nete');
+  assert.ok(candidates.includes('Salary expectation'));
+});
+
 test('builds required fields from package, profile, and cover letter', () => {
   const fields = buildRequiredFields({
     packageFields: { salary_expectation: 'To discuss' },

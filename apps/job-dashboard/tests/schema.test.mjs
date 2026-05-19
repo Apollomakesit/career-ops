@@ -21,3 +21,10 @@ test('jobs store structured fit scoring fields', () => {
   assert.match(SCHEMA_SQL, /missing_skills\s+JSONB/i);
   assert.match(SCHEMA_SQL, /recommendation\s+TEXT/i);
 });
+
+test('schema seeds the Romanian portals used by the discovery runner', () => {
+  for (const portal of ['ejobs', 'bestjobs', 'hipo', 'linkedin']) {
+    assert.match(SCHEMA_SQL, new RegExp(`'${portal}'`, 'i'));
+  }
+  assert.match(SCHEMA_SQL, /ON CONFLICT \(portal\) DO NOTHING/i);
+});

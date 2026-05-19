@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
   buildPortalSearchPlan,
+  defaultPortalRows,
   keywordSlug,
+  normalizePortalRows,
   supportedPortals,
 } from '../runner/portal-config.mjs';
 
@@ -29,4 +31,37 @@ test('normalizes keyword slugs per portal style', () => {
 
 test('documents supported portals', () => {
   assert.deepEqual(supportedPortals, ['ejobs', 'bestjobs', 'hipo', 'linkedin']);
+});
+
+test('provides default editable Romanian portal rows', () => {
+  assert.deepEqual(defaultPortalRows.map(portal => portal.portal), supportedPortals);
+  assert.ok(defaultPortalRows.every(portal => portal.fieldHints.discovery.enabled === true));
+});
+
+test('builds searches from dashboard portal rows and skips disabled portals', () => {
+  const portals = normalizePortalRows([
+    {
+      portal: 'ejobs',
+      fieldHints: {
+        discovery: {
+          enabled: true,
+          keywords: ['Application Support', 'MDM'],
+        },
+      },
+    },
+    {
+      portal: 'linkedin',
+      fieldHints: {
+        discovery: {
+          enabled: false,
+          keywords: ['Python'],
+        },
+      },
+    },
+  ]);
+
+  const plan = buildPortalSearchPlan({ portals, keywords: ['Fallback'], perPortalLimit: 4 });
+  assert.equal(plan.length, 2);
+  assert.ok(plan.every(item => item.portal === 'ejobs'));
+  assert.ok(plan.some(item => item.keyword === 'MDM'));
 });

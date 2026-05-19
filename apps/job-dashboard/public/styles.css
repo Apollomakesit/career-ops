@@ -201,7 +201,8 @@ h2 {
   gap: 12px;
 }
 
-.command-grid {
+.command-grid,
+.ops-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -217,6 +218,26 @@ h2 {
 .item h3 {
   margin: 0 0 8px;
   font-size: 16px;
+}
+
+.item-head,
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.item-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.button-row {
+  flex-wrap: wrap;
+}
+
+.wide-panel {
+  grid-column: 1 / -1;
 }
 
 .item p {
@@ -288,7 +309,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--line);
@@ -300,6 +322,50 @@ textarea {
 textarea {
   min-height: 120px;
   resize: vertical;
+}
+
+.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.compact textarea {
+  min-height: 86px;
+}
+
+.runner-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runner-card {
+  display: grid;
+  gap: 4px;
+  min-height: 92px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.runner-card span {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.runner-card small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.log-panel {
+  max-height: 360px;
+  overflow: auto;
 }
 
 .wide {
@@ -364,7 +430,10 @@ dialog {
     grid-template-columns: 1fr;
   }
 
-  .command-grid {
+  .command-grid,
+  .ops-grid,
+  .runner-cards,
+  .compact {
     grid-template-columns: 1fr;
   }
 

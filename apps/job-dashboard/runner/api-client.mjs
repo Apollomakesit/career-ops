@@ -6,6 +6,18 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
       return request(`${root}/api/profile`, { token, fetchImpl });
     },
 
+    async fetchPortals() {
+      return request(`${root}/api/portals`, { token, fetchImpl });
+    },
+
+    async fetchJobs() {
+      return request(`${root}/api/jobs`, { token, fetchImpl });
+    },
+
+    async fetchPackages() {
+      return request(`${root}/api/packages`, { token, fetchImpl });
+    },
+
     async fetchApprovedPackages() {
       return request(`${root}/api/packages?approvalState=approved`, { token, fetchImpl });
     },
@@ -29,6 +41,18 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
         options: {
           method: 'POST',
           body: JSON.stringify(job),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
+    async createPackage(jobId, payload) {
+      return request(`${root}/api/jobs/${jobId}/package`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'POST',
+          body: JSON.stringify(payload),
           headers: { 'content-type': 'application/json' },
         },
       });

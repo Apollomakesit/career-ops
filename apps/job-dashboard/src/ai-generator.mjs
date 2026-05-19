@@ -35,26 +35,107 @@ export function buildPackagePrompt({ profile = {}, job = {} }) {
   ].join('\n');
 }
 
+export function resolveAiRuntimeConfig(env = process.env) {
+  const provider = String(env.AI_PROVIDER || env.OPENAI_PROVIDER || 'openai').trim().toLowerCase();
+  const model = env.AI_MODEL || env.OPENAI_MODEL || (provider === 'anthropic' ? 'claude-sonnet-4-5' : 'gpt-5.2');
+  const baseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL || '';
+  const apiKey = env.AI_PROXY_API_KEY || env.AI_API_KEY || env.OPENAI_API_KEY || '';
+  return {
+    provider,
+    model,
+    baseUrl: baseUrl.replace(/\/$/, ''),
+    apiKey,
+  };
+}
+
 export async function generateApplicationPackage({
   profile = {},
   job = {},
-  apiKey = process.env.OPENAI_API_KEY || '',
-  model = process.env.OPENAI_MODEL || 'gpt-5.2',
+  provider,
+  apiKey,
+  model,
+  baseUrl,
   fetchImpl = fetch,
 } = {}) {
-  if (!apiKey) {
+  const runtime = resolveAiRuntimeConfig();
+  const config = {
+    ...runtime,
+    provider: provider ?? runtime.provider,
+    apiKey: apiKey ?? runtime.apiKey,
+    model: model ?? runtime.model,
+    baseUrl: baseUrl ?? runtime.baseUrl,
+  };
+
+  if (!config.apiKey && !config.baseUrl) {
     throw new AiGenerationError(
       'ai_not_configured',
-      'Set OPENAI_API_KEY on the Railway job-dashboard service to generate AI application packages.',
+      'Configure AI locally with CLIProxyAPI or set OPENAI_API_KEY on the Railway job-dashboard service.',
     );
   }
 
-  const response = await fetchImpl('https://api.openai.com/v1/responses', {
+  if (config.provider === 'anthropic') {
+    return generateApplicationPackageViaAnthropicMessages({
+      profile,
+      job,
+      apiKey: config.apiKey,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      fetchImpl,
+    });
+  }
+
+  return generateApplicationPackageViaOpenAIResponses({
+    profile,
+    job,
+    apiKey: config.apiKey,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    fetchImpl,
+  });
+}
+
+export async function generateApplicationPackageViaOpenAIResponses({
+  profile = {},
+  job = {},
+  apiKey = '',
+  model = 'gpt-5.2',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  if (!apiKey && !baseUrl) {
+    throw new AiGenerationError(
+      'ai_not_configured',
+      'Set OPENAI_API_KEY or configure AI_BASE_URL for CLIProxyAPI.',
+    );
+  }
+
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'openai')}/responses`;
+  const headers = { 'content-type': 'application/json' };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchOpenAIResponsesEndpoint({
+    endpoint,
+    headers,
+    profile,
+    job,
+    model,
+    fetchImpl,
+  });
+
+  return response;
+}
+
+async function fetchOpenAIResponsesEndpoint({
+  endpoint,
+  headers,
+  profile,
+  job,
+  model,
+  fetchImpl,
+}) {
+  const response = await fetchImpl(endpoint, {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model,
       input: [
@@ -63,7 +144,7 @@ export async function generateApplicationPackage({
           content: [
             {
               type: 'input_text',
-              text: 'You are a precise career assistant. Produce concise, truthful, ATS-friendly application materials. Do not invent metrics or experience.',
+              text: 'You are a precise career assistant. Produce concise, truthful, ATS-friendly application materials. Return JSON only.',
             },
           ],
         },
@@ -87,21 +168,57 @@ export async function generateApplicationPackage({
     const detail = await safeResponseText(response);
     throw new AiGenerationError(
       'ai_generation_failed',
-      `OpenAI package generation failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      `AI package generation failed with ${response.status}${detail ? `: ${detail}` : ''}`,
       502,
     );
   }
 
   const payload = await response.json();
-  const outputText = extractOutputText(payload);
-  let parsed;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch (error) {
-    throw new AiGenerationError('ai_generation_failed', `OpenAI returned invalid JSON: ${error.message}`, 502);
+  return parseGeneratedPackageText(extractOutputText(payload), 'AI returned invalid JSON');
+}
+
+export async function generateApplicationPackageViaAnthropicMessages({
+  profile = {},
+  job = {},
+  apiKey = '',
+  model = 'claude-sonnet-4-5',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'anthropic')}/messages`;
+  const headers = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      max_tokens: 4000,
+      system: 'You are a precise career assistant. Produce concise, truthful, ATS-friendly application materials. Return JSON only.',
+      messages: [
+        {
+          role: 'user',
+          content: buildPackagePrompt({ profile, job }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeResponseText(response);
+    throw new AiGenerationError(
+      'ai_generation_failed',
+      `Anthropic package generation failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      502,
+    );
   }
 
-  return validateGeneratedPackage(parsed);
+  const payload = await response.json();
+  return parseGeneratedPackageText(extractAnthropicText(payload), 'Anthropic returned invalid JSON');
 }
 
 export function validateGeneratedPackage(value) {
@@ -134,6 +251,31 @@ export function extractOutputText(payload) {
     }
   }
   return chunks.join('\n').trim();
+}
+
+export function extractAnthropicText(payload) {
+  const chunks = [];
+  for (const item of payload?.content || []) {
+    if (typeof item?.text === 'string') chunks.push(item.text);
+  }
+  return chunks.join('\n').trim();
+}
+
+function parseGeneratedPackageText(outputText, prefix) {
+  let parsed;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch (error) {
+    throw new AiGenerationError('ai_generation_failed', `${prefix}: ${error.message}`, 502);
+  }
+  return validateGeneratedPackage(parsed);
+}
+
+function normalizeProviderBaseUrl(baseUrl, provider) {
+  const trimmed = String(baseUrl || '').replace(/\/$/, '');
+  if (!trimmed) return 'https://api.openai.com/v1';
+  if (/\/v1$/i.test(trimmed)) return trimmed;
+  return `${trimmed}/api/provider/${provider === 'anthropic' ? 'anthropic' : 'openai'}/v1`;
 }
 
 async function safeResponseText(response) {
