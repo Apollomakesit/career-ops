@@ -5,7 +5,12 @@ import { dispatchApi } from '../src/routes.mjs';
 
 function createStore() {
   const state = {
-    profile: { fullName: 'Ioan Stefan Vlaicu' },
+    profile: {
+      fullName: 'Ioan Stefan Vlaicu',
+      email: 'ionut@example.com',
+      targetRoles: ['Application Support Engineer'],
+      skills: ['ServiceNow', 'MDM', 'Python'],
+    },
     portals: [{ portal: 'ejobs', usernameEmail: 'ionut@example.com' }],
     jobs: [],
     packages: [],
@@ -22,6 +27,7 @@ function createStore() {
       return portal;
     },
     async listJobs() { return state.jobs; },
+    async getJob(id) { return state.jobs.find(job => job.id === id) || null; },
     async createJob(job) {
       const created = { id: 'job-1', ...job };
       state.jobs.push(created);
@@ -120,4 +126,59 @@ test('runner can update package status without final submission', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.runnerStatus, 'ready_for_user_submit');
   assert.deepEqual(response.body.missingFields, { salary: 'required' });
+});
+
+test('generates an AI application package for a stored job', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: {
+      title: 'Application Support Engineer',
+      company: 'ExampleSoft',
+      location: 'Bucharest',
+      description: 'ServiceNow MDM Python automation',
+    },
+  }, store);
+
+  const response = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/package/generate',
+    body: {},
+  }, store, {
+    generateApplicationPackage: async ({ profile, job }) => ({
+      coverLetter: `Dear ${job.company}, ${profile.fullName} is a strong fit.`,
+      tailoredCvMd: '# Tailored CV',
+      requiredFields: { full_name: profile.fullName, email: profile.email },
+      missingFields: { salary_expectation: 'Confirm before submitting.' },
+    }),
+  });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.coverLetter, 'Dear ExampleSoft, Ioan Stefan Vlaicu is a strong fit.');
+  assert.equal(response.body.approvalState, 'draft');
+  assert.deepEqual(response.body.missingFields, { salary_expectation: 'Confirm before submitting.' });
+});
+
+test('returns a setup error when AI generation is not configured', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { title: 'Application Support Engineer', company: 'ExampleSoft' },
+  }, store);
+
+  const error = new Error('Set OPENAI_API_KEY');
+  error.code = 'ai_not_configured';
+
+  const response = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/package/generate',
+    body: {},
+  }, store, {
+    generateApplicationPackage: async () => { throw error; },
+  });
+
+  assert.equal(response.status, 424);
+  assert.equal(response.body.error, 'ai_not_configured');
 });

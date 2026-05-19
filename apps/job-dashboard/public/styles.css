@@ -148,7 +148,8 @@ h2 {
 
 .table,
 .stack,
-.form-grid {
+.form-grid,
+.command-grid {
   margin-top: 14px;
 }
 
@@ -161,7 +162,7 @@ h2 {
 
 .row {
   display: grid;
-  grid-template-columns: 90px 1.4fr 1.6fr 120px 140px 140px;
+  grid-template-columns: 90px 1.3fr 1.6fr 120px 130px 170px;
   gap: 12px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
@@ -200,6 +201,12 @@ h2 {
   gap: 12px;
 }
 
+.command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .item {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -215,6 +222,51 @@ h2 {
 .item p {
   color: var(--muted);
   margin-top: 6px;
+}
+
+pre {
+  overflow-x: auto;
+  margin: 10px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+code {
+  font-family: "Cascadia Mono", "Fira Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.field-block {
+  margin-top: 12px;
+}
+
+.kv-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.kv-list div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) 1fr;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.kv-list dt {
+  color: #344054;
+  font-weight: 700;
+}
+
+.kv-list dd {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .form-grid {
@@ -309,6 +361,14 @@ dialog {
   }
 
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .command-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kv-list div {
     grid-template-columns: 1fr;
   }
 }

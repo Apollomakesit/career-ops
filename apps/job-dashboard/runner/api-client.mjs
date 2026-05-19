@@ -2,6 +2,10 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
   const root = baseUrl.replace(/\/$/, '');
 
   return {
+    async fetchProfile() {
+      return request(`${root}/api/profile`, { token, fetchImpl });
+    },
+
     async fetchApprovedPackages() {
       return request(`${root}/api/packages?approvalState=approved`, { token, fetchImpl });
     },
@@ -13,6 +17,18 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
         options: {
           method: 'PATCH',
           body: JSON.stringify(payload),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
+    async createJob(job) {
+      return request(`${root}/api/jobs`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'POST',
+          body: JSON.stringify(job),
           headers: { 'content-type': 'application/json' },
         },
       });

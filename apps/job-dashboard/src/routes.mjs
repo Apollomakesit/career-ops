@@ -1,9 +1,11 @@
 import { scoreJobFit } from './fit-score.mjs';
+import { generateApplicationPackage as defaultGenerateApplicationPackage } from './ai-generator.mjs';
 
-export async function dispatchApi(request, store) {
+export async function dispatchApi(request, store, services = {}) {
   const url = new URL(request.url, 'http://dashboard.local');
   const method = request.method.toUpperCase();
   const segments = url.pathname.split('/').filter(Boolean);
+  const generateApplicationPackage = services.generateApplicationPackage || defaultGenerateApplicationPackage;
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
@@ -38,6 +40,27 @@ export async function dispatchApi(request, store) {
         location: profile?.location || '',
       });
       return json(201, await store.createJob({ ...(request.body || {}), fit }));
+    }
+
+    if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'package' && segments[4] === 'generate') {
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      const profile = await store.getProfile();
+      try {
+        const generated = await generateApplicationPackage({
+          profile,
+          job,
+          apiKey: services.openaiApiKey,
+          model: services.openaiModel,
+          fetchImpl: services.fetchImpl,
+        });
+        return json(201, await store.createPackage(segments[2], generated));
+      } catch (error) {
+        if (error.code === 'ai_not_configured' || error.code === 'ai_generation_failed') {
+          return json(error.status || 424, { error: error.code, message: error.message });
+        }
+        throw error;
+      }
     }
 
     if (method === 'GET' && url.pathname === '/api/packages') {
@@ -150,6 +173,20 @@ export function createPostgresStore(pool) {
         LIMIT 200
       `);
       return result.rows;
+    },
+
+    async getJob(id) {
+      const result = await pool.query(`
+        SELECT id, url, company, title, portal, location, description, source, status,
+               fit_score AS "fitScore", fit_category AS "fitCategory",
+               matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
+               risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
+               created_at AS "createdAt", updated_at AS "updatedAt"
+        FROM jobs
+        WHERE id = $1
+        LIMIT 1
+      `, [id]);
+      return result.rows[0] || null;
     },
 
     async createJob(job) {

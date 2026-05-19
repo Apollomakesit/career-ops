@@ -7,7 +7,9 @@
     "start": "node src/server.mjs",
     "test": "node --test tests/*.test.mjs",
     "migrate": "node src/schema.mjs",
-    "import:local": "node src/importers.mjs"
+    "import:local": "node src/importers.mjs",
+    "discover": "node runner/portal-discovery-runner.mjs",
+    "run:applications": "node runner/playwright-runner.mjs"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

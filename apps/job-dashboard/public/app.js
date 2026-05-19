@@ -49,7 +49,7 @@ function renderJobs() {
       <div>${escapeHtml(job.title || '')}<br><span class="muted">${escapeHtml(job.location || '')}</span></div>
       <div>${escapeHtml(job.recommendation || 'review')}</div>
       <div>${escapeHtml(job.status || 'discovered')}</div>
-      <button class="secondary-button" data-package-job="${job.id}">Draft</button>
+      <button class="secondary-button" data-generate-job="${job.id}">Generate AI Draft</button>
     </div>
   `).join('');
 
@@ -60,8 +60,8 @@ function renderJobs() {
     ${rows || '<div class="item"><h3>No jobs yet</h3><p>Add a job manually or import scanned jobs into the database.</p></div>'}
   `;
 
-  target.querySelectorAll('[data-package-job]').forEach(button => {
-    button.addEventListener('click', () => createPackage(button.dataset.packageJob));
+  target.querySelectorAll('[data-generate-job]').forEach(button => {
+    button.addEventListener('click', () => generatePackage(button.dataset.generateJob, button));
   });
 }
 
@@ -95,6 +95,14 @@ function renderPackages() {
       <p><strong>Approval:</strong> ${escapeHtml(pkg.approvalState)} · <strong>Runner:</strong> ${escapeHtml(pkg.runnerStatus)}</p>
       <p><strong>Cover letter:</strong></p>
       <p>${escapeHtml((pkg.coverLetter || '').slice(0, 360))}</p>
+      <div class="field-block">
+        <strong>Required fields</strong>
+        ${renderKeyValues(pkg.requiredFields)}
+      </div>
+      <div class="field-block">
+        <strong>Missing fields</strong>
+        ${renderKeyValues(pkg.missingFields)}
+      </div>
       <button class="primary-button" data-approve="${pkg.id}" ${pkg.approvalState === 'approved' ? 'disabled' : ''}>Approve for local runner</button>
     </div>
   `).join('') || '<div class="item"><h3>No packages yet</h3><p>Create a draft from an application row.</p></div>';
@@ -134,18 +142,19 @@ async function createJob(event) {
   await loadAll();
 }
 
-async function createPackage(jobId) {
-  const job = state.jobs.find(item => item.id === jobId);
-  await api(`/api/jobs/${jobId}/package`, {
-    method: 'POST',
-    body: {
-      coverLetter: `Draft cover letter for ${job?.company || 'the company'} based on Ioan's support, MDM, automation, and developer background.`,
-      tailoredCvMd: '# Tailored CV\n\nUse cv.md and article-digest.md proof points for this role.',
-      requiredFields: {},
-      missingFields: {},
-    },
-  });
-  await loadAll();
+async function generatePackage(jobId, button) {
+  button.disabled = true;
+  const previousText = button.textContent;
+  button.textContent = 'Generating...';
+  try {
+    await api(`/api/jobs/${jobId}/package/generate`, { method: 'POST', body: {} });
+    await loadAll();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = previousText;
+  }
 }
 
 async function saveProfile() {
@@ -183,8 +192,25 @@ async function api(path, options = {}) {
       return api(path, options);
     }
   }
-  if (!response.ok) throw new Error(`${response.status} ${path}`);
+  if (!response.ok) {
+    let message = `${response.status} ${path}`;
+    try {
+      const body = await response.json();
+      message = body.message || body.error || message;
+    } catch {
+      // Keep the HTTP status fallback.
+    }
+    throw new Error(message);
+  }
   return response.json();
+}
+
+function renderKeyValues(value) {
+  const entries = Object.entries(value || {});
+  if (entries.length === 0) return '<p class="muted">None</p>';
+  return `<dl class="kv-list">${entries.map(([key, item]) => `
+    <div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd></div>
+  `).join('')}</dl>`;
 }
 
 function value(id) {

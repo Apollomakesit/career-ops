@@ -38,6 +38,8 @@ modes/_profile.md
 .resolved-prompt-*
 node_modules/
 bun.lock
+.career-ops-browser/
+apps/job-dashboard/.career-ops-browser/
 
 # OS
 .DS_Store

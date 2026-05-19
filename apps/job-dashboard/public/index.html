@@ -17,6 +17,7 @@
       </div>
       <button class="nav-button active" data-view="applications">Applications</button>
       <button class="nav-button" data-view="review">Review</button>
+      <button class="nav-button" data-view="operations">Operations</button>
       <button class="nav-button" data-view="profile">Profile</button>
       <button class="nav-button" data-view="portals">Portals</button>
       <button class="nav-button" data-view="activity">Activity</button>
@@ -45,6 +46,27 @@
           <span class="muted">Approve only after checking the draft.</span>
         </div>
         <div id="packagesList" class="stack"></div>
+      </section>
+
+      <section id="operations" class="view">
+        <div class="section-head">
+          <h2>Operations</h2>
+          <span class="muted">Local runners use your browser profile and stop before submit.</span>
+        </div>
+        <div class="command-grid">
+          <article class="item">
+            <h3>Portal Discovery Runner</h3>
+            <pre><code>$env:DASHBOARD_URL="https://job-dashboard-production-0773.up.railway.app"
+$env:DASHBOARD_TOKEN=(railway variable list --service job-dashboard --json | ConvertFrom-Json).DASHBOARD_TOKEN
+node apps/job-dashboard/runner/portal-discovery-runner.mjs</code></pre>
+          </article>
+          <article class="item">
+            <h3>Application Filling Runner</h3>
+            <pre><code>$env:DASHBOARD_URL="https://job-dashboard-production-0773.up.railway.app"
+$env:DASHBOARD_TOKEN=(railway variable list --service job-dashboard --json | ConvertFrom-Json).DASHBOARD_TOKEN
+node apps/job-dashboard/runner/playwright-runner.mjs</code></pre>
+          </article>
+        </div>
       </section>
 
       <section id="profile" class="view">
