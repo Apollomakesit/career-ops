@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Career Ops Dashboard</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-mark">CO</span>
+        <div>
+          <strong>Career Ops</strong>
+          <span>Romania queue</span>
+        </div>
+      </div>
+      <button class="nav-button active" data-view="applications">Applications</button>
+      <button class="nav-button" data-view="review">Review</button>
+      <button class="nav-button" data-view="profile">Profile</button>
+      <button class="nav-button" data-view="portals">Portals</button>
+      <button class="nav-button" data-view="activity">Activity</button>
+    </aside>
+
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Career Ops Dashboard</h1>
+          <p>Fit scoring, draft review, approval queue, and local runner status.</p>
+        </div>
+        <button id="refreshButton" class="primary-button">Refresh</button>
+      </header>
+
+      <section id="applications" class="view active">
+        <div class="section-head">
+          <h2>Applications</h2>
+          <button id="newJobButton" class="secondary-button">Add Job</button>
+        </div>
+        <div id="jobsTable" class="table"></div>
+      </section>
+
+      <section id="review" class="view">
+        <div class="section-head">
+          <h2>Review Queue</h2>
+          <span class="muted">Approve only after checking the draft.</span>
+        </div>
+        <div id="packagesList" class="stack"></div>
+      </section>
+
+      <section id="profile" class="view">
+        <div class="section-head">
+          <h2>Profile</h2>
+          <button id="saveProfileButton" class="primary-button">Save Profile</button>
+        </div>
+        <div class="form-grid">
+          <label>Full name<input id="profileFullName"></label>
+          <label>Email<input id="profileEmail"></label>
+          <label>Phone<input id="profilePhone"></label>
+          <label>Location<input id="profileLocation"></label>
+          <label>LinkedIn<input id="profileLinkedin"></label>
+          <label>GitHub<input id="profileGithub"></label>
+          <label class="wide">Headline<input id="profileHeadline"></label>
+          <label class="wide">Target roles<textarea id="profileTargetRoles"></textarea></label>
+          <label class="wide">Skills<textarea id="profileSkills"></textarea></label>
+        </div>
+      </section>
+
+      <section id="portals" class="view">
+        <div class="section-head">
+          <h2>Portals</h2>
+          <span class="muted">No passwords here. Store reusable hints only.</span>
+        </div>
+        <div id="portalsList" class="stack"></div>
+      </section>
+
+      <section id="activity" class="view">
+        <div class="section-head">
+          <h2>Activity</h2>
+        </div>
+        <div id="eventsList" class="stack"></div>
+      </section>
+    </main>
+
+    <dialog id="jobDialog">
+      <form method="dialog" class="dialog-form">
+        <h2>Add Job</h2>
+        <label>URL<input id="jobUrl"></label>
+        <label>Company<input id="jobCompany"></label>
+        <label>Title<input id="jobTitle"></label>
+        <label>Portal<input id="jobPortal"></label>
+        <label>Location<input id="jobLocation"></label>
+        <label>Description<textarea id="jobDescription"></textarea></label>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary-button">Cancel</button>
+          <button id="createJobButton" value="default" class="primary-button">Create</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

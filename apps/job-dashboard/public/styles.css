@@ -1,0 +1,314 @@
+:root {
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --ink: #17202a;
+  --muted: #667085;
+  --line: #d9dee8;
+  --accent: #006d77;
+  --accent-strong: #004f58;
+  --good: #087f5b;
+  --warn: #b25e09;
+  --bad: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+}
+
+.rail {
+  background: #111827;
+  color: #f9fafb;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  margin-bottom: 8px;
+}
+
+.brand span {
+  display: block;
+  color: #aab4c4;
+  font-size: 13px;
+}
+
+.brand-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: #2dd4bf;
+  color: #083344 !important;
+  display: grid !important;
+  place-items: center;
+  font-weight: 800;
+}
+
+.nav-button,
+button {
+  font: inherit;
+}
+
+.nav-button {
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  color: #d8dee9;
+  background: transparent;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.nav-button.active,
+.nav-button:hover {
+  background: #263244;
+  color: #ffffff;
+}
+
+.shell {
+  min-width: 0;
+  padding: 24px;
+}
+
+.topbar,
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 28px;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+.topbar p,
+.muted {
+  color: var(--muted);
+}
+
+.view {
+  display: none;
+  margin-top: 24px;
+}
+
+.view.active {
+  display: block;
+}
+
+.primary-button,
+.secondary-button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.primary-button:hover {
+  background: var(--accent-strong);
+}
+
+.secondary-button {
+  color: var(--ink);
+  background: #ffffff;
+}
+
+.table,
+.stack,
+.form-grid {
+  margin-top: 14px;
+}
+
+.table {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 90px 1.4fr 1.6fr 120px 140px 140px;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row.header {
+  background: #eef2f7;
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.score {
+  font-weight: 800;
+}
+
+.score.good {
+  color: var(--good);
+}
+
+.score.warn {
+  color: var(--warn);
+}
+
+.score.bad {
+  color: var(--bad);
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.item h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.item p {
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+input,
+textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+dialog {
+  border: 0;
+  border-radius: 8px;
+  width: min(680px, calc(100vw - 28px));
+  padding: 0;
+}
+
+.dialog-form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 860px) {
+  body {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .shell {
+    padding: 16px;
+  }
+
+  .topbar,
+  .section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .row {
+    grid-template-columns: 72px 1fr;
+  }
+
+  .row.header {
+    display: none;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
