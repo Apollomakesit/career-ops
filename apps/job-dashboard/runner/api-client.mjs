@@ -46,6 +46,18 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
       });
     },
 
+    async updateJobFit(jobId, fit) {
+      return request(`${root}/api/jobs/${jobId}/fit`, {
+        token,
+        fetchImpl,
+        options: {
+          method: 'PATCH',
+          body: JSON.stringify(fit),
+          headers: { 'content-type': 'application/json' },
+        },
+      });
+    },
+
     async createPackage(jobId, payload) {
       return request(`${root}/api/jobs/${jobId}/package`, {
         token,

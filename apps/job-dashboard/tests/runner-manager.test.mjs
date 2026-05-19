@@ -32,6 +32,25 @@ test('starts a known runner command and records output', async () => {
   assert.match(current.discover.logs.at(-1).message, /exited with code 0/);
 });
 
+test('starts the AI fit scorer runner', () => {
+  const spawned = [];
+  const manager = createRunnerManager({
+    spawnImpl: (command, args) => {
+      spawned.push({ command, args });
+      return {
+        pid: 456,
+        stdout: { on() {} },
+        stderr: { on() {} },
+        on() {},
+      };
+    },
+  });
+
+  manager.start('score-ai');
+  assert.equal(spawned[0].args.at(-1), 'ai-fit-runner.mjs');
+  assert.equal(manager.status()['score-ai'].status, 'running');
+});
+
 test('rejects unknown runner names', () => {
   const manager = createRunnerManager({ spawnImpl: () => { throw new Error('not expected'); } });
   assert.throws(() => manager.start('unknown'), /Unknown runner/);

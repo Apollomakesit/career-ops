@@ -1,11 +1,15 @@
 import { scoreJobFit } from './fit-score.mjs';
-import { generateApplicationPackage as defaultGenerateApplicationPackage } from './ai-generator.mjs';
+import {
+  generateAiFitScore as defaultGenerateAiFitScore,
+  generateApplicationPackage as defaultGenerateApplicationPackage,
+} from './ai-generator.mjs';
 
 export async function dispatchApi(request, store, services = {}) {
   const url = new URL(request.url, 'http://dashboard.local');
   const method = request.method.toUpperCase();
   const segments = url.pathname.split('/').filter(Boolean);
   const generateApplicationPackage = services.generateApplicationPackage || defaultGenerateApplicationPackage;
+  const generateAiFitScore = services.generateAiFitScore || defaultGenerateAiFitScore;
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
@@ -40,6 +44,34 @@ export async function dispatchApi(request, store, services = {}) {
         location: profile?.location || '',
       });
       return json(201, await store.createJob({ ...(request.body || {}), fit }));
+    }
+
+    if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'fit') {
+      return json(200, await store.updateJobFit(segments[2], request.body || {}));
+    }
+
+    if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'fit' && segments[4] === 'generate') {
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      const profile = await store.getProfile();
+      try {
+        const generated = await generateAiFitScore({
+          profile,
+          job,
+          rulesFit: jobToFit(job),
+          provider: services.aiProvider,
+          apiKey: services.aiApiKey ?? services.openaiApiKey,
+          model: services.aiModel ?? services.openaiModel,
+          baseUrl: services.aiBaseUrl,
+          fetchImpl: services.fetchImpl,
+        });
+        return json(200, await store.updateJobFit(segments[2], generated));
+      } catch (error) {
+        if (error.code === 'ai_not_configured' || error.code === 'ai_generation_failed') {
+          return json(error.status || 424, { error: error.code, message: error.message });
+        }
+        throw error;
+      }
     }
 
     if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'package' && segments[4] === 'generate') {
@@ -241,6 +273,37 @@ export function createPostgresStore(pool) {
       return { ...result.rows[0], fit };
     },
 
+    async updateJobFit(id, fit) {
+      const normalized = normalizeFitPayload(fit);
+      const result = await pool.query(`
+        UPDATE jobs
+        SET fit_score = $2,
+            fit_category = $3,
+            matched_skills = $4::jsonb,
+            missing_skills = $5::jsonb,
+            risk_flags = $6::jsonb,
+            recommendation = $7,
+            fit_reasons = $8::jsonb,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING id, url, company, title, portal, location, description, source, status,
+                  fit_score AS "fitScore", fit_category AS "fitCategory",
+                  matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
+                  risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons"
+      `, [
+        id,
+        normalized.score,
+        normalized.category,
+        JSON.stringify(normalized.matchedSkills),
+        JSON.stringify(normalized.missingSkills),
+        JSON.stringify(normalized.riskFlags),
+        normalized.recommendation,
+        JSON.stringify(normalized.reasons),
+      ]);
+      await appendEvent(pool, 'job', id, 'job_fit_updated', `AI fit updated: ${normalized.score}%`, normalized);
+      return result.rows[0] || null;
+    },
+
     async listPackages(filter = {}) {
       const params = [];
       let where = '';
@@ -334,4 +397,35 @@ async function appendEvent(pool, entityType, entityId, eventType, message, paylo
     INSERT INTO events (entity_type, entity_id, event_type, message, payload)
     VALUES ($1, $2, $3, $4, $5::jsonb)
   `, [entityType, entityId, eventType, message, JSON.stringify(payload || {})]);
+}
+
+function jobToFit(job = {}) {
+  return {
+    score: job.fitScore ?? job.fit?.score ?? 0,
+    category: job.fitCategory ?? job.fit?.category ?? '',
+    matchedSkills: job.matchedSkills ?? job.fit?.matchedSkills ?? [],
+    missingSkills: job.missingSkills ?? job.fit?.missingSkills ?? [],
+    riskFlags: job.riskFlags ?? job.fit?.riskFlags ?? [],
+    recommendation: job.recommendation ?? job.fit?.recommendation ?? 'review',
+    reasons: job.fitReasons ?? job.fit?.reasons ?? [],
+  };
+}
+
+function normalizeFitPayload(fit = {}) {
+  const score = Number(fit.score ?? fit.fitScore ?? 0);
+  return {
+    score: Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0,
+    category: String(fit.category ?? fit.fitCategory ?? '').trim(),
+    matchedSkills: arrayOfStrings(fit.matchedSkills),
+    missingSkills: arrayOfStrings(fit.missingSkills),
+    riskFlags: arrayOfStrings(fit.riskFlags),
+    recommendation: String(fit.recommendation || 'review').trim(),
+    reasons: arrayOfStrings(fit.reasons || fit.fitReasons),
+  };
+}
+
+function arrayOfStrings(value) {
+  return Array.isArray(value)
+    ? value.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
 }

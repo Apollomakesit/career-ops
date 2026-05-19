@@ -50,14 +50,15 @@ test('extracts LinkedIn postings and removes duplicate URLs', () => {
   assert.equal(jobs[0].title, 'Python Developer');
 });
 
-test('filters navigation, login, and empty links', () => {
+test('filters navigation, login, empty links, and search-only URLs', () => {
   const jobs = normalizeExtractedLinks({
     portal: 'bestjobs',
     sourceUrl: 'https://www.bestjobs.eu/ro/locuri-de-munca/technical%2Bsupport',
     links: [
       { href: 'https://www.bestjobs.eu/ro/login', text: 'Login' },
-      { href: '#', text: 'Aplică' },
-      { href: 'https://www.bestjobs.eu/ro/locuri-de-munca/support-engineer', text: 'Support Engineer\nCompany\nRemote' },
+      { href: '#', text: 'Aplica' },
+      { href: 'https://www.bestjobs.eu/ro/locuri-de-munca/support-engineer', text: 'Search results' },
+      { href: 'https://www.bestjobs.eu/ro/job/support-engineer/123', text: 'Support Engineer\nCompany\nRemote' },
     ],
   });
 

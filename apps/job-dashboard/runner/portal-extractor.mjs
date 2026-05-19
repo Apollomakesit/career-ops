@@ -1,7 +1,16 @@
 const portalUrlPatterns = {
-  ejobs: [/ejobs\.ro\/user\/locuri-de-munca\//i, /ejobs\.ro\/locuri-de-munca\/[^/?#]+\/\d+/i],
-  bestjobs: [/bestjobs\.eu\/(?:ro\/)?locuri-de-munca\//i, /bestjobs\.eu\/job\//i],
-  hipo: [/hipo\.ro\/locuri-de-munca\/locuri_de_munca\//i, /hipo\.ro\/locuri-de-munca\/job\//i],
+  ejobs: [
+    /ejobs\.ro\/user\/locuri-de-munca\//i,
+    /ejobs\.ro\/locuri-de-munca\/[^/?#]+\/\d+/i,
+  ],
+  bestjobs: [
+    /bestjobs\.eu\/(?:ro\/)?locuri-de-munca\/[^/?#]+(?:\/\d+)?/i,
+    /bestjobs\.eu\/(?:ro\/)?job\//i,
+  ],
+  hipo: [
+    /hipo\.ro\/locuri-de-munca\/locuri_de_munca\//i,
+    /hipo\.ro\/locuri-de-munca\/job\//i,
+  ],
   linkedin: [/linkedin\.com\/jobs\/view\//i],
 };
 
@@ -74,7 +83,13 @@ function normalizeLink({ portal, sourceUrl, link, keyword }) {
 
 function looksLikeJobUrl(portal, url) {
   const patterns = portalUrlPatterns[portal] || [];
-  return patterns.some(pattern => pattern.test(url));
+  return patterns.some(pattern => pattern.test(url)) && !looksLikeSearchOnlyUrl(portal, url);
+}
+
+function looksLikeSearchOnlyUrl(portal, url) {
+  if (portal === 'ejobs') return /\/locuri-de-munca\/[^/?#]+(?:\?.*)?$/i.test(url) && !/\/\d+(?:[/?#]|$)/.test(url);
+  if (portal === 'bestjobs') return /\/locuri-de-munca\/[^/?#]+(?:\?.*)?$/i.test(url) && !/\/\d+(?:[/?#]|$)/.test(url);
+  return false;
 }
 
 function firstMeaningfulLine(lines) {
@@ -86,11 +101,11 @@ function firstMeaningfulLine(lines) {
 
 function isNavigationText(text) {
   const lower = text.toLowerCase();
-  return !lower || navigationWords.some(word => lower === word || lower.includes(word) && lower.length <= word.length + 8);
+  return !lower || navigationWords.some(word => lower === word || (lower.includes(word) && lower.length <= word.length + 8));
 }
 
 function looksLikeLocation(line) {
-  return /\b(bucuresti|bucharest|romania|românia|remote|hybrid|hibrid|cluj|iasi|iași|timisoara|timișoara|brasov|brașov|sibiu)\b/i.test(line);
+  return /\b(bucuresti|bucharest|romania|remote|hybrid|hibrid|cluj|iasi|timisoara|brasov|sibiu|europe|emea)\b/i.test(line);
 }
 
 function cleanText(value) {

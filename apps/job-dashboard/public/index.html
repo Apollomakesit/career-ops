@@ -59,6 +59,7 @@
             <div class="button-row">
               <button id="connectRunnerButton" class="secondary-button">Check Local Runner</button>
               <button class="primary-button" data-start-runner="discover">Find Jobs</button>
+              <button class="primary-button" data-start-runner="score-ai">AI Score Jobs</button>
               <button class="primary-button" data-start-runner="draft-ai">Generate AI Drafts</button>
               <button class="primary-button" data-start-runner="applications">Fill Approved</button>
             </div>
@@ -76,6 +77,7 @@ npm run runner:control --prefix apps/job-dashboard</code></pre>
               <label>AI model<input id="runnerAiModel"></label>
               <label class="wide">CLIProxyAPI base URL<input id="runnerAiBaseUrl"></label>
               <label class="wide">CLIProxyAPI local auth key<input id="runnerAiProxyApiKey" type="password" autocomplete="off"></label>
+              <label>AI score limit<input id="runnerAiFitLimit" type="number" min="1" max="200"></label>
               <label>Minimum fit %<input id="runnerAiDraftMinFit" type="number" min="0" max="100"></label>
               <label>Draft limit<input id="runnerAiDraftLimit" type="number" min="1" max="100"></label>
             </div>

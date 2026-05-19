@@ -68,6 +68,33 @@ test('imports discovered jobs into the dashboard', async () => {
   assert.equal(JSON.parse(calls[0].options.body).portal, 'ejobs');
 });
 
+test('updates AI fit scores through the dashboard API', async () => {
+  const calls = [];
+  const client = createRunnerClient({
+    baseUrl: 'https://dashboard.example/',
+    token: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return jsonResponse({ id: 'job-1', fitScore: 92, recommendation: 'apply' });
+    },
+  });
+
+  const updated = await client.updateJobFit('job-1', {
+    score: 92,
+    category: 'excellent',
+    matchedSkills: ['ServiceNow'],
+    missingSkills: [],
+    riskFlags: [],
+    recommendation: 'apply',
+    reasons: ['Strong match.'],
+  });
+
+  assert.equal(updated.fitScore, 92);
+  assert.equal(calls[0].url, 'https://dashboard.example/api/jobs/job-1/fit');
+  assert.equal(calls[0].options.method, 'PATCH');
+  assert.equal(calls[0].options.headers.authorization, 'Bearer secret');
+});
+
 test('fetches portal configuration and creates AI-generated packages', async () => {
   const calls = [];
   const client = createRunnerClient({

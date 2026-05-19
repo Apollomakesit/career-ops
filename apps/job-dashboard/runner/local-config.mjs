@@ -15,6 +15,7 @@ export function defaultLocalConfig() {
     aiBaseUrl: process.env.AI_BASE_URL || 'http://127.0.0.1:8317/api/provider/openai/v1',
     aiModel: process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-5.2',
     aiProxyApiKey: process.env.AI_PROXY_API_KEY || '',
+    aiFitLimit: process.env.AI_FIT_LIMIT || '40',
     aiDraftMinFit: process.env.AI_DRAFT_MIN_FIT || '60',
     aiDraftLimit: process.env.AI_DRAFT_LIMIT || '20',
   };
@@ -51,6 +52,7 @@ export function envFromLocalConfig(config = loadLocalConfig()) {
     AI_BASE_URL: config.aiBaseUrl || '',
     AI_MODEL: config.aiModel || '',
     AI_PROXY_API_KEY: config.aiProxyApiKey || '',
+    AI_FIT_LIMIT: String(config.aiFitLimit || '40'),
     AI_DRAFT_MIN_FIT: String(config.aiDraftMinFit || '60'),
     AI_DRAFT_LIMIT: String(config.aiDraftLimit || '20'),
   };

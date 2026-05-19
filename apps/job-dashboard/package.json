@@ -9,6 +9,7 @@
     "migrate": "node src/schema.mjs",
     "import:local": "node src/importers.mjs",
     "discover": "node runner/portal-discovery-runner.mjs",
+    "score:ai": "node runner/ai-fit-runner.mjs",
     "draft:ai": "node runner/ai-draft-runner.mjs",
     "runner:control": "node runner/control-server.mjs",
     "run:applications": "node runner/playwright-runner.mjs"

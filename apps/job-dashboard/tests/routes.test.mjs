@@ -33,6 +33,19 @@ function createStore() {
       state.jobs.push(created);
       return created;
     },
+    async updateJobFit(id, fit) {
+      const job = state.jobs.find(item => item.id === id);
+      Object.assign(job, {
+        fitScore: fit.score,
+        fitCategory: fit.category,
+        matchedSkills: fit.matchedSkills || [],
+        missingSkills: fit.missingSkills || [],
+        riskFlags: fit.riskFlags || [],
+        recommendation: fit.recommendation || 'review',
+        fitReasons: fit.reasons || fit.fitReasons || [],
+      });
+      return job;
+    },
     async listPackages(filter) {
       return filter?.approvalState
         ? state.packages.filter(pkg => pkg.approvalState === filter.approvalState)
@@ -126,6 +139,37 @@ test('runner can update package status without final submission', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.runnerStatus, 'ready_for_user_submit');
   assert.deepEqual(response.body.missingFields, { salary: 'required' });
+});
+
+test('updates a job fit score from the local AI scorer', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: {
+      title: 'Application Support Engineer',
+      company: 'ExampleSoft',
+      description: 'ServiceNow MDM Python automation',
+    },
+  }, store);
+
+  const response = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/job-1/fit',
+    body: {
+      score: 89,
+      category: 'strong',
+      matchedSkills: ['ServiceNow', 'MDM', 'Python'],
+      missingSkills: ['Azure'],
+      riskFlags: [],
+      recommendation: 'apply',
+      reasons: ['Strong overlap with support automation work.'],
+    },
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.fitScore, 89);
+  assert.equal(response.body.recommendation, 'apply');
 });
 
 test('generates an AI application package for a stored job', async () => {

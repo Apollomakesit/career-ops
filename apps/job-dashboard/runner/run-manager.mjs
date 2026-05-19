@@ -5,6 +5,7 @@ import path from 'node:path';
 const runnerDir = path.dirname(fileURLToPath(import.meta.url));
 const commands = {
   discover: 'portal-discovery-runner.mjs',
+  'score-ai': 'ai-fit-runner.mjs',
   'draft-ai': 'ai-draft-runner.mjs',
   applications: 'playwright-runner.mjs',
 };

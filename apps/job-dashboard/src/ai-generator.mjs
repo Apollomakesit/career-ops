@@ -35,9 +35,43 @@ export function buildPackagePrompt({ profile = {}, job = {} }) {
   ].join('\n');
 }
 
+export function buildFitPrompt({ profile = {}, job = {}, rulesFit = {} }) {
+  return [
+    'Produce an OwlApply-style job fit assessment as JSON.',
+    'Score how well this candidate fits this specific job from 0 to 100.',
+    'Be strict, truthful, and evidence-based. Penalize missing core requirements, seniority mismatch, non-Romania constraints, and pure-sales/call-center roles.',
+    '',
+    'Candidate:',
+    `Name: ${profile.fullName || ''}`,
+    `Headline: ${profile.headline || ''}`,
+    `Location: ${profile.location || ''}`,
+    `Target roles: ${(profile.targetRoles || []).join(', ')}`,
+    `Skills: ${(profile.skills || []).join(', ')}`,
+    `Defaults: ${JSON.stringify(profile.applicationDefaults || {})}`,
+    '',
+    'Rules-based baseline:',
+    `Score: ${rulesFit.score ?? ''}`,
+    `Category: ${rulesFit.category || ''}`,
+    `Matched skills: ${(rulesFit.matchedSkills || []).join(', ')}`,
+    `Missing skills: ${(rulesFit.missingSkills || []).join(', ')}`,
+    `Risk flags: ${(rulesFit.riskFlags || []).join(', ')}`,
+    `Recommendation: ${rulesFit.recommendation || ''}`,
+    '',
+    'Job:',
+    `Company: ${job.company || ''}`,
+    `Title: ${job.title || ''}`,
+    `Portal: ${job.portal || ''}`,
+    `Location: ${job.location || ''}`,
+    `Description: ${job.description || ''}`,
+    '',
+    'Return JSON with score, category, matchedSkills, missingSkills, riskFlags, recommendation, and reasons.',
+    'recommendation must be one of: strong_apply, apply, review, skip.',
+  ].join('\n');
+}
+
 export function resolveAiRuntimeConfig(env = process.env) {
   const provider = String(env.AI_PROVIDER || env.OPENAI_PROVIDER || 'openai').trim().toLowerCase();
-  const model = env.AI_MODEL || env.OPENAI_MODEL || (provider === 'anthropic' ? 'claude-sonnet-4-5' : 'gpt-5.2');
+  const model = env.AI_MODEL || env.OPENAI_MODEL || (provider === 'anthropic' ? 'SubscriptionGateway/claude-sonnet-4-6' : 'gpt-5.2');
   const baseUrl = env.AI_BASE_URL || env.OPENAI_BASE_URL || '';
   const apiKey = env.AI_PROXY_API_KEY || env.AI_API_KEY || env.OPENAI_API_KEY || '';
   return {
@@ -46,6 +80,55 @@ export function resolveAiRuntimeConfig(env = process.env) {
     baseUrl: baseUrl.replace(/\/$/, ''),
     apiKey,
   };
+}
+
+export async function generateAiFitScore({
+  profile = {},
+  job = {},
+  rulesFit = {},
+  provider,
+  apiKey,
+  model,
+  baseUrl,
+  fetchImpl = fetch,
+} = {}) {
+  const runtime = resolveAiRuntimeConfig();
+  const config = {
+    ...runtime,
+    provider: provider ?? runtime.provider,
+    apiKey: apiKey ?? runtime.apiKey,
+    model: model ?? runtime.model,
+    baseUrl: baseUrl ?? runtime.baseUrl,
+  };
+
+  if (!config.apiKey && !config.baseUrl) {
+    throw new AiGenerationError(
+      'ai_not_configured',
+      'Configure AI locally with CLIProxyAPI or set OPENAI_API_KEY on the Railway job-dashboard service.',
+    );
+  }
+
+  if (config.provider === 'anthropic') {
+    return generateAiFitScoreViaAnthropicMessages({
+      profile,
+      job,
+      rulesFit,
+      apiKey: config.apiKey,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      fetchImpl,
+    });
+  }
+
+  return generateAiFitScoreViaOpenAIResponses({
+    profile,
+    job,
+    rulesFit,
+    apiKey: config.apiKey,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    fetchImpl,
+  });
 }
 
 export async function generateApplicationPackage({
@@ -92,6 +175,70 @@ export async function generateApplicationPackage({
     baseUrl: config.baseUrl,
     fetchImpl,
   });
+}
+
+export async function generateAiFitScoreViaOpenAIResponses({
+  profile = {},
+  job = {},
+  rulesFit = {},
+  apiKey = '',
+  model = 'gpt-5.2',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  if (!apiKey && !baseUrl) {
+    throw new AiGenerationError(
+      'ai_not_configured',
+      'Set OPENAI_API_KEY or configure AI_BASE_URL for CLIProxyAPI.',
+    );
+  }
+
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'openai')}/responses`;
+  const headers = { 'content-type': 'application/json' };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: 'You are a precise job-fit assessor. Return compact JSON only, using only the provided candidate and job evidence.',
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: buildFitPrompt({ profile, job, rulesFit }) }],
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'job_fit_score',
+          strict: false,
+          schema: fitScoreSchema,
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeResponseText(response);
+    throw new AiGenerationError(
+      'ai_generation_failed',
+      `AI fit scoring failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      502,
+    );
+  }
+
+  const payload = await response.json();
+  return parseGeneratedFitText(extractOutputText(payload), 'AI returned invalid fit JSON');
 }
 
 export async function generateApplicationPackageViaOpenAIResponses({
@@ -177,11 +324,56 @@ async function fetchOpenAIResponsesEndpoint({
   return parseGeneratedPackageText(extractOutputText(payload), 'AI returned invalid JSON');
 }
 
+export async function generateAiFitScoreViaAnthropicMessages({
+  profile = {},
+  job = {},
+  rulesFit = {},
+  apiKey = '',
+  model = 'SubscriptionGateway/claude-sonnet-4-6',
+  baseUrl = '',
+  fetchImpl = fetch,
+} = {}) {
+  const endpoint = `${normalizeProviderBaseUrl(baseUrl, 'anthropic')}/messages`;
+  const headers = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+  };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchImpl(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      max_tokens: 1800,
+      system: 'You are a precise job-fit assessor. Return compact JSON only, using only the provided candidate and job evidence.',
+      messages: [
+        {
+          role: 'user',
+          content: buildFitPrompt({ profile, job, rulesFit }),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await safeResponseText(response);
+    throw new AiGenerationError(
+      'ai_generation_failed',
+      `Anthropic fit scoring failed with ${response.status}${detail ? `: ${detail}` : ''}`,
+      502,
+    );
+  }
+
+  const payload = await response.json();
+  return parseGeneratedFitText(extractAnthropicText(payload), 'Anthropic returned invalid fit JSON');
+}
+
 export async function generateApplicationPackageViaAnthropicMessages({
   profile = {},
   job = {},
   apiKey = '',
-  model = 'claude-sonnet-4-5',
+  model = 'SubscriptionGateway/claude-sonnet-4-6',
   baseUrl = '',
   fetchImpl = fetch,
 } = {}) {
@@ -241,6 +433,27 @@ export function validateGeneratedPackage(value) {
   };
 }
 
+export function validateGeneratedFitScore(value) {
+  if (!isPlainObject(value)) {
+    throw new Error('Generated fit score must be an object.');
+  }
+
+  const score = clampScore(value.score);
+  const recommendation = ['strong_apply', 'apply', 'review', 'skip'].includes(value.recommendation)
+    ? value.recommendation
+    : 'review';
+
+  return {
+    score,
+    category: String(value.category || categoryFromScore(score)).trim(),
+    matchedSkills: stringArray(value.matchedSkills),
+    missingSkills: stringArray(value.missingSkills),
+    riskFlags: stringArray(value.riskFlags),
+    recommendation,
+    reasons: stringArray(value.reasons || value.fitReasons),
+  };
+}
+
 export function extractOutputText(payload) {
   if (typeof payload?.output_text === 'string') return payload.output_text;
 
@@ -271,6 +484,16 @@ function parseGeneratedPackageText(outputText, prefix) {
   return validateGeneratedPackage(parsed);
 }
 
+function parseGeneratedFitText(outputText, prefix) {
+  let parsed;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch (error) {
+    throw new AiGenerationError('ai_generation_failed', `${prefix}: ${error.message}`, 502);
+  }
+  return validateGeneratedFitScore(parsed);
+}
+
 function normalizeProviderBaseUrl(baseUrl, provider) {
   const trimmed = String(baseUrl || '').replace(/\/$/, '');
   if (!trimmed) return 'https://api.openai.com/v1';
@@ -288,6 +511,24 @@ async function safeResponseText(response) {
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function clampScore(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function categoryFromScore(score) {
+  if (score >= 90) return 'excellent';
+  if (score >= 75) return 'strong';
+  if (score >= 55) return 'possible';
+  return 'weak';
+}
+
+function stringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, 12);
 }
 
 const stringMapSchema = {
@@ -310,5 +551,43 @@ export const packageSchema = {
     },
     requiredFields: stringMapSchema,
     missingFields: stringMapSchema,
+  },
+};
+
+export const fitScoreSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['score', 'category', 'matchedSkills', 'missingSkills', 'riskFlags', 'recommendation', 'reasons'],
+  properties: {
+    score: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 100,
+      description: 'Candidate-job fit percentage from 0 to 100.',
+    },
+    category: {
+      type: 'string',
+      description: 'Short category such as excellent, strong, possible, weak.',
+    },
+    matchedSkills: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    missingSkills: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    riskFlags: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    recommendation: {
+      type: 'string',
+      enum: ['strong_apply', 'apply', 'review', 'skip'],
+    },
+    reasons: {
+      type: 'array',
+      items: { type: 'string' },
+    },
   },
 };

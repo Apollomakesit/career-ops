@@ -2,11 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildFitPrompt,
   buildPackagePrompt,
+  generateAiFitScore,
+  generateAiFitScoreViaAnthropicMessages,
+  generateAiFitScoreViaOpenAIResponses,
   generateApplicationPackageViaAnthropicMessages,
   generateApplicationPackage,
   generateApplicationPackageViaOpenAIResponses,
   resolveAiRuntimeConfig,
+  validateGeneratedFitScore,
   validateGeneratedPackage,
 } from '../src/ai-generator.mjs';
 
@@ -34,6 +39,20 @@ test('builds a package prompt from profile and job context', () => {
   assert.match(prompt, /Application Support Engineer/);
   assert.match(prompt, /ServiceNow/);
   assert.match(prompt, /JSON/);
+});
+
+test('builds a fit scoring prompt from profile, job, and rules score', () => {
+  const prompt = buildFitPrompt({
+    profile,
+    job,
+    rulesFit: { score: 91, matchedSkills: ['ServiceNow'], missingSkills: ['Azure'] },
+  });
+
+  assert.match(prompt, /OwlApply-style/);
+  assert.match(prompt, /Ioan Stefan Vlaicu/);
+  assert.match(prompt, /Application Support Engineer/);
+  assert.match(prompt, /ServiceNow/);
+  assert.match(prompt, /91/);
 });
 
 test('requires an OpenAI API key for real AI generation', async () => {
@@ -125,7 +144,7 @@ test('can target a CLIProxyAPI Anthropic messages endpoint', async () => {
     profile,
     job,
     apiKey: 'local-proxy-key',
-    model: 'claude-sonnet-4-5',
+    model: 'SubscriptionGateway/claude-sonnet-4-6',
     baseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
     fetchImpl: async (url, options) => {
       calls.push({ url, options });
@@ -154,18 +173,96 @@ test('can target a CLIProxyAPI Anthropic messages endpoint', async () => {
   assert.equal(result.coverLetter, 'Anthropic cover letter');
 });
 
+test('can generate an AI fit score through an OpenAI-compatible Responses endpoint', async () => {
+  const calls = [];
+  const result = await generateAiFitScoreViaOpenAIResponses({
+    profile,
+    job,
+    rulesFit: { score: 86 },
+    apiKey: 'local-proxy-key',
+    model: 'gpt-5.2',
+    baseUrl: 'http://127.0.0.1:8317/api/provider/openai/v1',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            output_text: JSON.stringify({
+              score: 88,
+              category: 'strong',
+              matchedSkills: ['ServiceNow', 'MDM', 'Python'],
+              missingSkills: ['Azure App Service'],
+              riskFlags: ['No explicit FastAPI requirement in JD'],
+              recommendation: 'apply',
+              reasons: ['Direct match for support, MDM, and automation.'],
+            }),
+          };
+        },
+      };
+    },
+  });
+
+  assert.equal(calls[0].url, 'http://127.0.0.1:8317/api/provider/openai/v1/responses');
+  assert.equal(JSON.parse(calls[0].options.body).text.format.name, 'job_fit_score');
+  assert.equal(result.score, 88);
+  assert.deepEqual(result.matchedSkills, ['ServiceNow', 'MDM', 'Python']);
+});
+
+test('can generate an AI fit score through a CLIProxyAPI Anthropic endpoint', async () => {
+  const calls = [];
+  const result = await generateAiFitScore({
+    profile,
+    job,
+    rulesFit: { score: 74 },
+    provider: 'anthropic',
+    apiKey: 'local-proxy-key',
+    model: 'SubscriptionGateway/claude-sonnet-4-6',
+    baseUrl: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                score: 81,
+                category: 'strong',
+                matchedSkills: ['Application Support', 'MDM'],
+                missingSkills: [],
+                riskFlags: [],
+                recommendation: 'apply',
+                reasons: ['Strong enterprise support overlap.'],
+              }),
+            }],
+          };
+        },
+      };
+    },
+  });
+
+  assert.equal(calls[0].url, 'http://127.0.0.1:8317/api/provider/anthropic/v1/messages');
+  assert.equal(JSON.parse(calls[0].options.body).max_tokens, 1800);
+  assert.equal(result.score, 81);
+  assert.equal(result.recommendation, 'apply');
+});
+
 test('resolves CLIProxyAI runtime configuration from environment-style values', () => {
   const config = resolveAiRuntimeConfig({
     AI_PROVIDER: 'anthropic',
     AI_BASE_URL: 'http://127.0.0.1:8317/api/provider/anthropic/v1',
     AI_PROXY_API_KEY: 'local-proxy-key',
-    AI_MODEL: 'claude-sonnet-4-5',
+    AI_MODEL: 'SubscriptionGateway/claude-sonnet-4-6',
   });
 
   assert.equal(config.provider, 'anthropic');
   assert.equal(config.baseUrl, 'http://127.0.0.1:8317/api/provider/anthropic/v1');
   assert.equal(config.apiKey, 'local-proxy-key');
-  assert.equal(config.model, 'claude-sonnet-4-5');
+  assert.equal(config.model, 'SubscriptionGateway/claude-sonnet-4-6');
 });
 
 test('rejects incomplete AI package JSON', () => {
@@ -173,4 +270,18 @@ test('rejects incomplete AI package JSON', () => {
     () => validateGeneratedPackage({ coverLetter: 'Only one field' }),
     /coverLetter, tailoredCvMd, requiredFields, and missingFields/,
   );
+});
+
+test('normalizes generated AI fit score JSON', () => {
+  const fit = validateGeneratedFitScore({
+    score: 103,
+    matchedSkills: ['Python'],
+    recommendation: 'unknown',
+    reasons: ['Good overlap.'],
+  });
+
+  assert.equal(fit.score, 100);
+  assert.equal(fit.category, 'excellent');
+  assert.equal(fit.recommendation, 'review');
+  assert.deepEqual(fit.missingSkills, []);
 });

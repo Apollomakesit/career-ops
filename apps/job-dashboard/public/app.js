@@ -264,12 +264,13 @@ function renderRunnerConfig(config = {}) {
   setValue('runnerAiModel', config.aiModel || 'gpt-5.2');
   setValue('runnerAiBaseUrl', config.aiBaseUrl || 'http://127.0.0.1:8317/api/provider/openai/v1');
   setValue('runnerAiProxyApiKey', config.aiProxyApiKey || '');
+  setValue('runnerAiFitLimit', config.aiFitLimit || '40');
   setValue('runnerAiDraftMinFit', config.aiDraftMinFit || '60');
   setValue('runnerAiDraftLimit', config.aiDraftLimit || '20');
 }
 
 function renderRunnerStatus(status = {}) {
-  const names = ['discover', 'draft-ai', 'applications'];
+  const names = ['discover', 'score-ai', 'draft-ai', 'applications'];
   document.getElementById('runnerCards').innerHTML = names.map(name => {
     const run = status[name] || { status: 'idle', logs: [] };
     return `
@@ -294,6 +295,7 @@ async function saveRunnerConfig() {
     aiModel: value('runnerAiModel'),
     aiBaseUrl: value('runnerAiBaseUrl'),
     aiProxyApiKey: value('runnerAiProxyApiKey'),
+    aiFitLimit: value('runnerAiFitLimit') || '40',
     aiDraftMinFit: value('runnerAiDraftMinFit') || '60',
     aiDraftLimit: value('runnerAiDraftLimit') || '20',
   };
