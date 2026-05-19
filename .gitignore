@@ -42,6 +42,9 @@ bun.lock
 apps/job-dashboard/.career-ops-browser/
 .career-ops-runner.local.json
 
+# Local dashboard SQLite database
+apps/job-dashboard/.data/
+
 # OS
 .DS_Store
 *.mov

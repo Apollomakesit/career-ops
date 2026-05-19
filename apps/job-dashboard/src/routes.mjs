@@ -504,22 +504,21 @@ export function createPostgresStore(pool) {
     },
 
     async claimRunnerCommand() {
+      // Portable across Postgres and SQLite. This dashboard is single-user, so
+      // claiming the oldest queued command without row locking is sufficient.
       const result = await pool.query(`
-        WITH next AS (
+        UPDATE runner_commands
+        SET status = 'running', claimed_at = now(), updated_at = now()
+        WHERE id = (
           SELECT id
           FROM runner_commands
           WHERE status = 'queued'
           ORDER BY created_at ASC
           LIMIT 1
-          FOR UPDATE SKIP LOCKED
         )
-        UPDATE runner_commands c
-        SET status = 'running', claimed_at = now(), updated_at = now()
-        FROM next
-        WHERE c.id = next.id
-        RETURNING c.id, c.runner, c.status, c.payload, c.logs, c.exit_code AS "exitCode",
-                  c.created_at AS "createdAt", c.claimed_at AS "claimedAt",
-                  c.finished_at AS "finishedAt", c.updated_at AS "updatedAt"
+        RETURNING id, runner, status, payload, logs, exit_code AS "exitCode",
+                  created_at AS "createdAt", claimed_at AS "claimedAt",
+                  finished_at AS "finishedAt", updated_at AS "updatedAt"
       `);
       return result.rows[0] || null;
     },
