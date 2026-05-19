@@ -40,6 +40,7 @@ node_modules/
 bun.lock
 .career-ops-browser/
 apps/job-dashboard/.career-ops-browser/
+.career-ops-chrome/
 .career-ops-runner.local.json
 
 # Local dashboard SQLite database

@@ -8,6 +8,7 @@ const commands = {
   'score-ai': 'ai-fit-runner.mjs',
   'draft-ai': 'ai-draft-runner.mjs',
   applications: 'playwright-runner.mjs',
+  'login-browser': 'open-login-browser.mjs',
 };
 
 export function createRunnerManager({

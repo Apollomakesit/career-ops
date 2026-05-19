@@ -20,7 +20,6 @@ param(
   [int]$DashboardPort = 3000,
   [int]$CliProxyPort = 8317,
   [int]$ControlPort = 48731,
-  [string]$ChromeProfile = "Default",
   [switch]$NoSystemChrome,
   [switch]$NoBrowser,
   [switch]$NoStart
@@ -126,17 +125,18 @@ if (-not $managementKey) {
 }
 $CliProxyUrl = "http://127.0.0.1:$CliProxyPort"
 
-# Drive the real Google Chrome profile so portal logins (LinkedIn, eJobs, ...)
-# are already in place. Falls back to a dedicated Playwright profile otherwise.
+# Use installed Google Chrome with a DEDICATED automation profile (separate
+# from your personal Chrome). Log into the job sites in it once and the
+# session cookies persist for every later run. Because it is its own profile
+# folder, it can run while your normal Chrome is open.
 $chromeChannel = ""
 $chromeUserData = ""
 if (-not $NoSystemChrome) {
-  $chromeCandidate = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
-  if (Test-Path $chromeCandidate) {
+  if (Test-Path (Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data")) {
     $chromeChannel = "chrome"
-    $chromeUserData = $chromeCandidate
+    $chromeUserData = Join-Path $RepoRoot ".career-ops-chrome"
   } else {
-    Write-Warning "Google Chrome user data not found; runners will use a dedicated Playwright profile."
+    Write-Warning "Google Chrome not found; runners will use a dedicated Playwright Chromium profile."
   }
 }
 
@@ -146,7 +146,7 @@ $config = [ordered]@{
   browserProfile = ".career-ops-browser"
   browserChannel = $chromeChannel
   browserUserDataDir = $chromeUserData
-  browserProfileDirectory = $(if ($chromeChannel) { $ChromeProfile } else { "" })
+  browserProfileDirectory = ""
   aiProvider     = $AiProvider
   aiBaseUrl      = "http://127.0.0.1:$CliProxyPort/api/provider/$AiProvider/v1"
   aiModel        = $AiModel
@@ -214,15 +214,16 @@ Write-Host ("CLIProxyAPI    {0,-8} http://127.0.0.1:{1}" -f $cliProxyStatus, $Cl
 Write-Host ("Runner control {0,-8} http://127.0.0.1:{1}" -f $controlStatus, $ControlPort)
 Write-Host ("AI provider    {0} / {1}" -f $AiProvider, $AiModel)
 if ($chromeChannel) {
-  Write-Host ("Browser        Google Chrome (profile '{0}')" -f $ChromeProfile)
+  Write-Host "Browser        Google Chrome (dedicated career-ops profile)"
 } else {
   Write-Host "Browser        Playwright Chromium (dedicated profile)"
 }
 Write-Host "============================================================="
 Write-Host ""
 if ($chromeChannel) {
-  Write-Host "Note: close all Google Chrome windows before running Find Jobs -" -ForegroundColor Yellow
-  Write-Host "      Chrome cannot share your profile with the automation at the same time." -ForegroundColor Yellow
+  Write-Host "First time: in the dashboard go to Operations -> Open Login Browser," -ForegroundColor Yellow
+  Write-Host "sign into LinkedIn / eJobs / BestJobs / HiPo, then close that window." -ForegroundColor Yellow
+  Write-Host "The saved session is reused by every discovery run." -ForegroundColor Yellow
   Write-Host ""
 }
 
