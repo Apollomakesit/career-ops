@@ -13,6 +13,8 @@ import {
   resolveAiRuntimeConfig,
   validateGeneratedFitScore,
   validateGeneratedPackage,
+  coerceJsonObject,
+  coerceStringMap,
 } from '../src/ai-generator.mjs';
 
 const profile = {
@@ -270,6 +272,34 @@ test('rejects incomplete AI package JSON', () => {
     () => validateGeneratedPackage({ coverLetter: 'Only one field' }),
     /coverLetter, tailoredCvMd, requiredFields, and missingFields/,
   );
+});
+
+test('recovers JSON from markdown-fenced and prose-wrapped model output', () => {
+  assert.deepEqual(coerceJsonObject('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepEqual(coerceJsonObject('Here is the result:\n{"a":1,"b":"x"} done'), { a: 1, b: 'x' });
+  assert.deepEqual(coerceJsonObject('{"nested":{"k":"}"}}'), { nested: { k: '}' } });
+  assert.throws(() => coerceJsonObject('no json here'), /no JSON object/);
+});
+
+test('coerces array-shaped field maps into string maps', () => {
+  assert.deepEqual(
+    coerceStringMap([{ field: 'full_name', value: 'Ioan' }, { name: 'email', answer: 'a@b.c' }]),
+    { full_name: 'Ioan', email: 'a@b.c' },
+  );
+  assert.deepEqual(coerceStringMap(['confirm salary']), { field_1: 'confirm salary' });
+  assert.deepEqual(coerceStringMap({ note: 42 }), { note: '42' });
+  assert.deepEqual(coerceStringMap(null), {});
+});
+
+test('validateGeneratedPackage accepts array-shaped required/missing fields', () => {
+  const result = validateGeneratedPackage({
+    coverLetter: 'Letter.',
+    tailoredCvMd: '# CV',
+    requiredFields: [{ field: 'full_name', value: 'Ioan' }],
+    missingFields: [{ field: 'salary', note: 'confirm' }],
+  });
+  assert.deepEqual(result.requiredFields, { full_name: 'Ioan' });
+  assert.deepEqual(result.missingFields, { salary: 'confirm' });
 });
 
 test('normalizes generated AI fit score JSON', () => {
