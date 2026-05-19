@@ -55,8 +55,19 @@ function createSqlitePool(filePath) {
   mkdirSync(path.dirname(filePath), { recursive: true });
 
   // Lazy require so environments using Postgres never need the native module.
+  // better-sqlite3 is an optionalDependency: present locally, skipped on hosts
+  // (e.g. Railway) that run against Postgres instead.
   const require = createRequire(import.meta.url);
-  const Database = require('better-sqlite3');
+  let Database;
+  try {
+    Database = require('better-sqlite3');
+  } catch (error) {
+    throw new Error(
+      'Local SQLite mode needs the better-sqlite3 package. Run "npm install" in '
+      + 'apps/job-dashboard, or set DATABASE_URL to use Postgres instead. '
+      + `(${error.message})`,
+    );
+  }
   const db = new Database(filePath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
