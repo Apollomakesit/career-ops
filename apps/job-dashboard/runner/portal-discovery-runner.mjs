@@ -59,11 +59,21 @@ try {
     try {
       await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 90000 });
       await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-      if (await needsHumanIntervention(page)) {
-        await rl.question(`Manual step needed on ${item.portal}. Log in / solve CAPTCHA, then press Enter here to continue.`);
-      }
 
-      const jobs = dedupeJobs(await extractJobsFromPage(page, item));
+      let jobs = dedupeJobs(await extractJobsFromPage(page, item));
+
+      // Only treat the page as needing a manual step when extraction found
+      // nothing - a normal results page has a "log in" link too. Never block on
+      // stdin when there is no interactive terminal (e.g. started from the
+      // dashboard); the runner would hang forever waiting for Enter.
+      if (jobs.length === 0 && await needsHumanIntervention(page)) {
+        if (input.isTTY) {
+          await rl.question(`Manual step needed on ${item.portal}. Log in / solve CAPTCHA in the browser, then press Enter here to continue.`);
+          jobs = dedupeJobs(await extractJobsFromPage(page, item));
+        } else {
+          console.log(`  ! ${item.portal} appears to need a manual login. Log into it in the open browser window, then run discovery again.`);
+        }
+      }
       console.log(`Found ${jobs.length} candidate job(s).`);
 
       for (const job of jobs) {
