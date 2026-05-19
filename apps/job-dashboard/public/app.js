@@ -334,18 +334,22 @@ function renderAiModelOptions(config = {}) {
     : fallbackAiModels(config);
 
   select.innerHTML = models.map(model => {
-    const status = model.available ? 'available' : 'not advertised';
+    const status = model.available ? 'available' : 'unavailable on gateway';
     const suffix = `${model.recommended ? ' · cheap' : ''} · ${status}`;
-    const selected = model.provider === (config.aiProvider || selectedProvider)
+    const selected = model.available
+      && model.provider === (config.aiProvider || selectedProvider)
       && [model.id, model.gatewayModel].includes(config.aiModel)
       ? 'selected'
       : '';
-    return `<option value="${escapeHtml(model.provider)}|${escapeHtml(model.id)}" data-provider="${escapeHtml(model.provider)}" data-gateway-model="${escapeHtml(model.gatewayModel || model.id)}" data-base-url="${escapeHtml(baseUrlFor(model.provider))}" ${selected}>${escapeHtml(model.label || model.id)}${escapeHtml(suffix)}</option>`;
+    const disabled = model.available ? '' : 'disabled';
+    return `<option value="${escapeHtml(model.provider)}|${escapeHtml(model.id)}" data-provider="${escapeHtml(model.provider)}" data-gateway-model="${escapeHtml(model.gatewayModel || model.id)}" data-base-url="${escapeHtml(baseUrlFor(model.provider))}" ${disabled} ${selected}>${escapeHtml(model.label || model.id)}${escapeHtml(suffix)}</option>`;
   }).join('');
 
-  if (!select.value && select.options.length > 0) {
-    const preferred = [...select.options].find(option => option.dataset.provider === selectedProvider)
-      || [...select.options].find(option => option.dataset.provider === 'anthropic')
+  const current = select.selectedOptions[0];
+  if ((!select.value || current?.disabled) && select.options.length > 0) {
+    const preferred = [...select.options].find(option => !option.disabled && option.dataset.provider === selectedProvider)
+      || [...select.options].find(option => !option.disabled && option.dataset.provider === 'anthropic')
+      || [...select.options].find(option => !option.disabled)
       || select.options[0];
     preferred.selected = true;
   }

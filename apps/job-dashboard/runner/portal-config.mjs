@@ -29,16 +29,24 @@ export function buildPortalSearchPlan({
   perPortalLimit = Number(process.env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6),
 } = {}) {
   const portalRows = normalizePortalRows(portals);
-  const plan = [];
 
-  for (const row of portalRows) {
+  // Build one search queue per portal, then round-robin across portals so a
+  // fixed job budget is shared fairly instead of being exhausted by whichever
+  // portal happens to run first.
+  const perPortalQueues = portalRows.map(row => {
     const selectedKeywords = keywordsForPortal(row, keywords).slice(0, perPortalLimit);
-    for (const keyword of selectedKeywords) {
-      plan.push({
-        portal: row.portal,
-        keyword,
-        url: searchUrlFor(row.portal, keyword),
-      });
+    return selectedKeywords.map(keyword => ({
+      portal: row.portal,
+      keyword,
+      url: searchUrlFor(row.portal, keyword),
+    }));
+  });
+
+  const plan = [];
+  const maxDepth = Math.max(0, ...perPortalQueues.map(queue => queue.length));
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    for (const queue of perPortalQueues) {
+      if (queue[depth]) plan.push(queue[depth]);
     }
   }
 

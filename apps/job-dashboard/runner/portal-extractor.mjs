@@ -23,16 +23,49 @@ const navigationWords = [
   'urmatoarea',
   'aplica',
   'apply',
+  'aplica rapid',
   'salveaza cautarea',
   'set job alert',
   'inscriere',
+  'detalii',
+  'vezi job',
+  'home',
+  'acasa',
 ];
 
+// Promoted-listing badges that appear as their own card line before the company.
+const badgeWords = ['premium', 'promovat', 'promoted', 'nou', 'new', 'urgent', 'recomandat', 'featured', 'hot', 'top'];
+
+const monthWords = /\b(ian|feb|mar|apr|mai|iun|iul|aug|sep|oct|nov|noi|dec|january|february|march|april|may|june|july|august|september|october|november|december)\w*\b/i;
+
+// Walk up from a job anchor to the smallest reasonable "card" container and
+// return its text plus a company hint, all evaluated inside the browser page.
+const cardExtractorScript = `(() => {
+  function climbToCard(anchor) {
+    let el = anchor;
+    let best = anchor;
+    for (let i = 0; i < 8 && el.parentElement; i++) {
+      el = el.parentElement;
+      const text = (el.innerText || '').trim();
+      if (text.length > 1100) break;
+      if (text.length >= 24) best = el;
+    }
+    return best;
+  }
+  return [...document.querySelectorAll('a[href]')].map(anchor => {
+    const card = climbToCard(anchor);
+    const companyLink = card.querySelector('a[href*="/company/"], a[href*="/companie/"], a[href*="/companii/"]');
+    return {
+      href: anchor.href,
+      text: (anchor.innerText || anchor.textContent || '').trim(),
+      cardText: (card.innerText || '').trim(),
+      companyHint: companyLink ? (companyLink.innerText || '').trim() : '',
+    };
+  });
+})()`;
+
 export async function extractJobsFromPage(page, { portal, sourceUrl, keyword }) {
-  const links = await page.$$eval('a', anchors => anchors.map(anchor => ({
-    href: anchor.href,
-    text: anchor.innerText || anchor.textContent || '',
-  })));
+  const links = await page.evaluate(cardExtractorScript);
   const pageText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
   const jobs = normalizeExtractedLinks({ portal, sourceUrl, links, keyword });
   return jobs.map(job => ({
@@ -48,36 +81,51 @@ export function normalizeExtractedLinks({ portal, sourceUrl, links = [], keyword
 }
 
 export function dedupeJobs(jobs) {
-  const seen = new Set();
-  const result = [];
+  const seen = new Map();
   for (const job of jobs) {
     const key = canonicalUrl(job.url);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push({ ...job, url: key });
+    const existing = seen.get(key);
+    // Keep the record with the most complete data (company + location).
+    if (!existing || recordScore(job) > recordScore(existing)) {
+      seen.set(key, { ...job, url: key });
+    }
   }
-  return result;
+  return [...seen.values()];
+}
+
+function recordScore(job) {
+  return (job.company ? 2 : 0) + (job.location ? 1 : 0) + (job.title ? 1 : 0);
 }
 
 function normalizeLink({ portal, sourceUrl, link, keyword }) {
   if (!link.href || String(link.href).trim().startsWith('#')) return null;
   const url = canonicalUrl(link.href || '', sourceUrl);
-  const text = cleanText(link.text || '');
-  if (!url || !looksLikeJobUrl(portal, url) || isNavigationText(text)) return null;
+  if (!url || !looksLikeJobUrl(portal, url)) return null;
 
-  const lines = text.split('\n').map(line => cleanText(line)).filter(Boolean);
-  const title = firstMeaningfulLine(lines);
+  const anchorLines = splitLines(link.text || '');
+  const cardLines = splitLines(link.cardText || link.text || '');
+  const companyHint = cleanText(link.companyHint || '');
+
+  const title = pickTitle({ anchorLines, cardLines });
   if (!title || isNavigationText(title)) return null;
+
+  const company = pickCompany({ portal, url, cardLines, companyHint, title });
+  const location = cardLines.find(line => (
+    line !== title
+    && line !== company
+    && line.length <= 70
+    && looksLikeLocation(line)
+  )) || '';
 
   return {
     url,
     portal,
     source: `portal-discovery:${portal}`,
     sourceQuery: keyword,
-    company: extractCompany({ portal, url, lines }),
+    company,
     title,
-    location: lines.find(looksLikeLocation) || '',
-    description: lines.slice(0, 6).join('\n'),
+    location,
+    description: cardLines.filter(line => line !== title).slice(0, 6).join('\n'),
     discoveredAt: new Date().toISOString(),
     sourceUrl,
   };
@@ -94,6 +142,48 @@ function looksLikeSearchOnlyUrl(portal, url) {
   return false;
 }
 
+function pickTitle({ anchorLines, cardLines }) {
+  // The anchor text is the cleanest title source when it is a single line.
+  const anchorTitle = firstMeaningfulLine(anchorLines);
+  if (anchorTitle && !looksLikeDate(anchorTitle) && !looksLikeLocation(anchorTitle) && !looksLikeSalary(anchorTitle)) {
+    return anchorTitle;
+  }
+  return firstMeaningfulLine(cardLines.filter(line => !looksLikeDate(line))) || '';
+}
+
+function pickCompany({ portal, url, cardLines, companyHint, title }) {
+  if (companyHint && !isNavigationText(companyHint) && companyHint.length <= 80) {
+    return companyHint;
+  }
+
+  const candidate = cardLines.find(line => (
+    line !== title
+    && line.length >= 2
+    && line.length <= 80
+    && !looksLikeDate(line)
+    && !looksLikeLocation(line)
+    && !looksLikeSalary(line)
+    && !isNavigationText(line)
+    && !badgeWords.includes(line.toLowerCase())
+  ));
+  if (candidate) return candidate;
+
+  if (portal === 'hipo') {
+    const match = url.match(/\/locuri_de_munca\/\d+\/([^/]+)\//i);
+    if (match) {
+      return decodeURIComponent(match[1]).replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+  }
+  return '';
+}
+
+function splitLines(text) {
+  return String(text)
+    .split('\n')
+    .map(line => cleanText(line))
+    .filter(Boolean);
+}
+
 function firstMeaningfulLine(lines) {
   return lines.find(line => {
     const lower = line.toLowerCase();
@@ -102,12 +192,25 @@ function firstMeaningfulLine(lines) {
 }
 
 function isNavigationText(text) {
-  const lower = text.toLowerCase();
+  const lower = String(text).toLowerCase().trim();
   return !lower || navigationWords.some(word => lower === word || (lower.includes(word) && lower.length <= word.length + 8));
 }
 
 function looksLikeLocation(line) {
-  return /\b(bucuresti|bucharest|romania|remote|hybrid|hibrid|cluj|iasi|timisoara|brasov|sibiu|europe|emea)\b/i.test(line);
+  return /\b(bucuresti|bucurești|bucharest|romania|românia|remote|hybrid|hibrid|on-site|on site|cluj|iasi|iași|timisoara|timișoara|brasov|brașov|sibiu|constanta|constanța|craiova|oradea|europe|emea)\b/i.test(line);
+}
+
+function looksLikeDate(line) {
+  const value = String(line).trim();
+  if (/^\d{1,2}\s+\S+\s+\d{4}$/.test(value)) return true;
+  if (/^(acum|azi|ieri|today|yesterday)\b/i.test(value)) return true;
+  return /\d/.test(value) && monthWords.test(value) && value.length <= 24;
+}
+
+function looksLikeSalary(line) {
+  const value = String(line);
+  if (!/\d/.test(value)) return false;
+  return /(\bron\b|\beur\b|\blei\b|\busd\b|estimare|salar|brut|net\b|gross|\d[\d.\s,]*-\s*\d)/i.test(value);
 }
 
 function cleanText(value) {
@@ -125,21 +228,6 @@ function canonicalUrl(value, baseUrl) {
   } catch {
     return '';
   }
-}
-
-function extractCompany({ portal, url, lines }) {
-  const lineCompany = lines[1] && !looksLikeLocation(lines[1]) && !isNavigationText(lines[1])
-    ? lines[1]
-    : '';
-  if (lineCompany) return lineCompany;
-  if (portal !== 'hipo') return '';
-
-  const match = url.match(/\/locuri_de_munca\/\d+\/([^/]+)\//i);
-  if (!match) return '';
-  return decodeURIComponent(match[1])
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function summarizeAround(text, title) {
