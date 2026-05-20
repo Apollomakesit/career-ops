@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createPool } from './db.mjs';
@@ -12,6 +14,7 @@ export const requiredTables = [
   'events',
   'runner_state',
   'runner_commands',
+  'migrations_applied',
 ];
 
 export const SCHEMA_SQL = `
@@ -51,28 +54,28 @@ VALUES
     'ejobs',
     '',
     '',
-    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}'::jsonb,
     'Romanian job board discovery and assisted application hints.'
   ),
   (
     'bestjobs',
     '',
     '',
-    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}'::jsonb,
     'BestJobs Romania discovery and assisted application hints.'
   ),
   (
     'hipo',
     '',
     '',
-    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}'::jsonb,
     'HiPo Romania discovery and assisted application hints.'
   ),
   (
     'linkedin',
     'https://www.linkedin.com/in/ioanstefanvlaicu/',
     '',
-    '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}'::jsonb,
+    '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}'::jsonb,
     'LinkedIn Romania discovery; login and final submit stay manual.'
   )
 ON CONFLICT (portal) DO NOTHING;
@@ -94,6 +97,20 @@ CREATE TABLE IF NOT EXISTS jobs (
   risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
   recommendation TEXT NOT NULL DEFAULT 'review',
   fit_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  salary_min INTEGER,
+  salary_max INTEGER,
+  salary_currency TEXT NOT NULL DEFAULT '',
+  salary_period TEXT NOT NULL DEFAULT '',
+  work_model TEXT NOT NULL DEFAULT 'unknown',
+  employment_type TEXT NOT NULL DEFAULT 'unknown',
+  posted_date TIMESTAMPTZ,
+  requirements_text TEXT NOT NULL DEFAULT '',
+  responsibilities_text TEXT NOT NULL DEFAULT '',
+  cv_match_score NUMERIC NOT NULL DEFAULT 0,
+  cv_matched_skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+  cv_matched_projects JSONB NOT NULL DEFAULT '[]'::jsonb,
+  cv_missing_skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+  cv_match_breakdown JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -147,6 +164,11 @@ CREATE TABLE IF NOT EXISTS runner_commands (
 
 CREATE INDEX IF NOT EXISTS runner_commands_status_created_idx
   ON runner_commands (status, created_at);
+
+CREATE TABLE IF NOT EXISTS migrations_applied (
+  name TEXT PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 // SQLite dialect of the same schema, used when the dashboard runs locally with
@@ -182,10 +204,10 @@ CREATE TABLE IF NOT EXISTS portal_credentials (
 
 INSERT INTO portal_credentials (portal, profile_url, username_email, field_hints, notes)
 VALUES
-  ('ejobs', '', '', '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}', 'Romanian job board discovery and assisted application hints.'),
-  ('bestjobs', '', '', '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}', 'BestJobs Romania discovery and assisted application hints.'),
-  ('hipo', '', '', '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}', 'HiPo Romania discovery and assisted application hints.'),
-  ('linkedin', 'https://www.linkedin.com/in/ioanstefanvlaicu/', '', '{"discovery":{"enabled":true,"keywords":["Technical Support","Application Support","MDM","Python FastAPI","Full Stack Developer","AI Automation Engineer"]},"fieldAliases":{}}', 'LinkedIn Romania discovery; login and final submit stay manual.')
+  ('ejobs', '', '', '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}', 'Romanian job board discovery and assisted application hints.'),
+  ('bestjobs', '', '', '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}', 'BestJobs Romania discovery and assisted application hints.'),
+  ('hipo', '', '', '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}', 'HiPo Romania discovery and assisted application hints.'),
+  ('linkedin', 'https://www.linkedin.com/in/ioanstefanvlaicu/', '', '{"discovery":{"enabled":true,"keywords":["Full Stack Developer","AI Engineer","Backend Engineer","Python Developer"]},"fieldAliases":{}}', 'LinkedIn Romania discovery; login and final submit stay manual.')
 ON CONFLICT (portal) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS jobs (
@@ -205,6 +227,20 @@ CREATE TABLE IF NOT EXISTS jobs (
   risk_flags TEXT NOT NULL DEFAULT '[]',
   recommendation TEXT NOT NULL DEFAULT 'review',
   fit_reasons TEXT NOT NULL DEFAULT '[]',
+  salary_min INTEGER,
+  salary_max INTEGER,
+  salary_currency TEXT NOT NULL DEFAULT '',
+  salary_period TEXT NOT NULL DEFAULT '',
+  work_model TEXT NOT NULL DEFAULT 'unknown',
+  employment_type TEXT NOT NULL DEFAULT 'unknown',
+  posted_date TEXT,
+  requirements_text TEXT NOT NULL DEFAULT '',
+  responsibilities_text TEXT NOT NULL DEFAULT '',
+  cv_match_score REAL NOT NULL DEFAULT 0,
+  cv_matched_skills TEXT NOT NULL DEFAULT '[]',
+  cv_matched_projects TEXT NOT NULL DEFAULT '[]',
+  cv_missing_skills TEXT NOT NULL DEFAULT '[]',
+  cv_match_breakdown TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -258,14 +294,39 @@ CREATE TABLE IF NOT EXISTS runner_commands (
 
 CREATE INDEX IF NOT EXISTS runner_commands_status_created_idx
   ON runner_commands (status, created_at);
+
+CREATE TABLE IF NOT EXISTS migrations_applied (
+  name TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 export async function migrate(pool = createPool()) {
   if (pool.dialect === 'sqlite') {
     pool.exec(SQLITE_SCHEMA_SQL);
+    await runMigrations(pool);
     return;
   }
   await pool.query(SCHEMA_SQL);
+  await runMigrations(pool);
+}
+
+export async function runMigrations(pool) {
+  const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
+  let files = [];
+  try {
+    files = (await readdir(migrationsDir)).filter(file => /^\d+-.+\.mjs$/.test(file)).sort();
+  } catch {
+    return;
+  }
+
+  for (const file of files) {
+    const applied = await pool.query('SELECT name FROM migrations_applied WHERE name = $1', [file]);
+    if (applied.rows.length > 0) continue;
+    const migration = await import(`./migrations/${file}`);
+    await migration.up(pool);
+    await pool.query('INSERT INTO migrations_applied (name) VALUES ($1)', [file]);
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

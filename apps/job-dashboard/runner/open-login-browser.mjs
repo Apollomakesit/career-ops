@@ -7,14 +7,15 @@ import 'dotenv/config';
 
 import { describeBrowserProfile, launchBrowserContext } from './browser-profile.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
+import { portalLoginUrl } from './portal-auth.mjs';
 
 const env = { ...envFromLocalConfig(loadLocalConfig()), ...process.env };
 
 const portals = [
-  ['LinkedIn', 'https://www.linkedin.com/login'],
-  ['eJobs', 'https://www.ejobs.ro/'],
-  ['BestJobs', 'https://www.bestjobs.eu/ro'],
-  ['HiPo', 'https://www.hipo.ro/locuri-de-munca/logincontcandidat'],
+  ['LinkedIn', portalLoginUrl('linkedin')],
+  ['eJobs', portalLoginUrl('ejobs')],
+  ['BestJobs', portalLoginUrl('bestjobs')],
+  ['HiPo', portalLoginUrl('hipo')],
 ];
 
 console.log(`Opening the automation login browser: ${describeBrowserProfile(env)}`);

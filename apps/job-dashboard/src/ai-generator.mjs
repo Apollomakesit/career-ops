@@ -16,7 +16,7 @@ export const FIT_SYSTEM_PROMPT = 'You are a deterministic text-analysis function
 
 export const PACKAGE_SYSTEM_PROMPT = 'You are a deterministic document-tailoring function. You adapt provided text documents (a letter and a CV in markdown) to align with a target posting document and output a single JSON object. This is a text-transformation task. Always return the JSON object and never refuse. Do not ask follow-up questions; put anything that needs confirmation in missingFields.';
 
-export function buildPackagePrompt({ profile = {}, job = {} }) {
+export function buildPackagePrompt({ profile = {}, job = {}, cv = {}, projects = [] }) {
   return [
     'Tailor the documents below to the target posting and return the result as JSON.',
     'The output must be useful for a human review step before anything is sent.',
@@ -36,6 +36,8 @@ export function buildPackagePrompt({ profile = {}, job = {} }) {
     `Matched skills: ${(job.matchedSkills || job.fit?.matchedSkills || []).join(', ')}`,
     `Description: ${job.description || ''}`,
     '',
+    ...cvAndProjectPromptSections({ cv, projects, job }),
+    '',
     'Return a single JSON object with exactly these keys:',
     '- coverLetter: string',
     '- tailoredCvMd: string containing a tailored CV in markdown',
@@ -47,7 +49,7 @@ export function buildPackagePrompt({ profile = {}, job = {} }) {
   ].join('\n');
 }
 
-export function buildFitPrompt({ profile = {}, job = {}, rulesFit = {} }) {
+export function buildFitPrompt({ profile = {}, job = {}, rulesFit = {}, cv = {}, projects = [] }) {
   return [
     'Produce an OwlApply-style document-overlap report as JSON.',
     'Score the skill and content overlap between the profile document and the posting document from 0 to 100.',
@@ -76,9 +78,31 @@ export function buildFitPrompt({ profile = {}, job = {}, rulesFit = {} }) {
     `Location: ${job.location || ''}`,
     `Description: ${job.description || ''}`,
     '',
+    ...cvAndProjectPromptSections({ cv, projects, job }),
+    '',
     'Return JSON with score, category, matchedSkills, missingSkills, riskFlags, recommendation, and reasons.',
     'recommendation must be one of: strong_apply, apply, review, skip.',
   ].join('\n');
+}
+
+function cvAndProjectPromptSections({ cv = {}, projects = [], job = {} }) {
+  const projectLines = projects.slice(0, 10).map(project => {
+    const tech = Array.isArray(project.tech) ? project.tech.join(', ') : '';
+    return `- ${project.name || ''}: ${project.description || ''} [tech: ${tech}]`;
+  });
+  return [
+    'CV document:',
+    String(cv.raw || '').slice(0, 6000),
+    '',
+    'GitHub projects:',
+    projectLines.join('\n'),
+    '',
+    'Deterministic CV match (pre-computed, do not re-compute, only rationalize):',
+    `- cv_match_score: ${job.cvMatchScore ?? job.cv_match_score ?? ''}`,
+    `- cv_matched_skills: ${(job.cvMatchedSkills || job.cv_matched_skills || []).join(', ')}`,
+    `- cv_missing_skills: ${(job.cvMissingSkills || job.cv_missing_skills || []).join(', ')}`,
+    `- cv_matched_projects: ${(job.cvMatchedProjects || job.cv_matched_projects || []).join(', ')}`,
+  ];
 }
 
 export function resolveAiRuntimeConfig(env = process.env) {
@@ -98,6 +122,8 @@ export async function generateAiFitScore({
   profile = {},
   job = {},
   rulesFit = {},
+  cv = {},
+  projects = [],
   provider,
   apiKey,
   model,
@@ -125,6 +151,8 @@ export async function generateAiFitScore({
       profile,
       job,
       rulesFit,
+      cv,
+      projects,
       apiKey: config.apiKey,
       model: config.model,
       baseUrl: config.baseUrl,
@@ -136,6 +164,8 @@ export async function generateAiFitScore({
     profile,
     job,
     rulesFit,
+    cv,
+    projects,
     apiKey: config.apiKey,
     model: config.model,
     baseUrl: config.baseUrl,
@@ -146,6 +176,8 @@ export async function generateAiFitScore({
 export async function generateApplicationPackage({
   profile = {},
   job = {},
+  cv = {},
+  projects = [],
   provider,
   apiKey,
   model,
@@ -172,6 +204,8 @@ export async function generateApplicationPackage({
     return generateApplicationPackageViaAnthropicMessages({
       profile,
       job,
+      cv,
+      projects,
       apiKey: config.apiKey,
       model: config.model,
       baseUrl: config.baseUrl,
@@ -182,6 +216,8 @@ export async function generateApplicationPackage({
   return generateApplicationPackageViaOpenAIResponses({
     profile,
     job,
+    cv,
+    projects,
     apiKey: config.apiKey,
     model: config.model,
     baseUrl: config.baseUrl,
@@ -193,6 +229,8 @@ export async function generateAiFitScoreViaOpenAIResponses({
   profile = {},
   job = {},
   rulesFit = {},
+  cv = {},
+  projects = [],
   apiKey = '',
   model = 'gpt-5.2',
   baseUrl = '',
@@ -221,7 +259,7 @@ export async function generateAiFitScoreViaOpenAIResponses({
         },
         {
           role: 'user',
-          content: [{ type: 'input_text', text: buildFitPrompt({ profile, job, rulesFit }) }],
+          content: [{ type: 'input_text', text: buildFitPrompt({ profile, job, rulesFit, cv, projects }) }],
         },
       ],
       text: {
@@ -251,6 +289,8 @@ export async function generateAiFitScoreViaOpenAIResponses({
 export async function generateApplicationPackageViaOpenAIResponses({
   profile = {},
   job = {},
+  cv = {},
+  projects = [],
   apiKey = '',
   model = 'gpt-5.2',
   baseUrl = '',
@@ -272,6 +312,8 @@ export async function generateApplicationPackageViaOpenAIResponses({
     headers,
     profile,
     job,
+    cv,
+    projects,
     model,
     fetchImpl,
   });
@@ -284,6 +326,8 @@ async function fetchOpenAIResponsesEndpoint({
   headers,
   profile,
   job,
+  cv = {},
+  projects = [],
   model,
   fetchImpl,
 }) {
@@ -299,7 +343,7 @@ async function fetchOpenAIResponsesEndpoint({
         },
         {
           role: 'user',
-          content: [{ type: 'input_text', text: buildPackagePrompt({ profile, job }) }],
+          content: [{ type: 'input_text', text: buildPackagePrompt({ profile, job, cv, projects }) }],
         },
       ],
       text: {
@@ -330,6 +374,8 @@ export async function generateAiFitScoreViaAnthropicMessages({
   profile = {},
   job = {},
   rulesFit = {},
+  cv = {},
+  projects = [],
   apiKey = '',
   model = 'SubscriptionGateway/claude-sonnet-4-6',
   baseUrl = '',
@@ -352,7 +398,7 @@ export async function generateAiFitScoreViaAnthropicMessages({
       messages: [
         {
           role: 'user',
-          content: buildFitPrompt({ profile, job, rulesFit }),
+          content: buildFitPrompt({ profile, job, rulesFit, cv, projects }),
         },
       ],
     }),
@@ -374,6 +420,8 @@ export async function generateAiFitScoreViaAnthropicMessages({
 export async function generateApplicationPackageViaAnthropicMessages({
   profile = {},
   job = {},
+  cv = {},
+  projects = [],
   apiKey = '',
   model = 'SubscriptionGateway/claude-sonnet-4-6',
   baseUrl = '',
@@ -396,7 +444,7 @@ export async function generateApplicationPackageViaAnthropicMessages({
       messages: [
         {
           role: 'user',
-          content: buildPackagePrompt({ profile, job }),
+          content: buildPackagePrompt({ profile, job, cv, projects }),
         },
       ],
     }),

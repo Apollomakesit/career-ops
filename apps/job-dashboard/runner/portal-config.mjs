@@ -1,13 +1,20 @@
 export const supportedPortals = ['ejobs', 'bestjobs', 'hipo', 'linkedin'];
 
 const defaultKeywords = [
-  'Technical Support',
-  'Application Support',
-  'MDM',
-  'Python FastAPI',
   'Full Stack Developer',
-  'AI Automation Engineer',
+  'AI Engineer',
+  'Backend Engineer',
+  'Python Developer',
 ];
+
+const romanianKeywordAliases = new Map([
+  ['full stack developer', ['Dezvoltator Full Stack']],
+  ['backend engineer', ['Programator Backend', 'Inginer Software']],
+  ['python developer', ['Programator Python']],
+  ['ai engineer', ['Specialist AI', 'Inginer AI']],
+  ['automation engineer', ['Inginer Automatizari']],
+  ['ai automation engineer', ['Specialist AI', 'Inginer AI', 'Inginer Automatizari']],
+]);
 
 export const defaultPortalRows = supportedPortals.map(portal => ({
   portal,
@@ -26,7 +33,7 @@ export const defaultPortalRows = supportedPortals.map(portal => ({
 export function buildPortalSearchPlan({
   keywords = defaultKeywords,
   portals = supportedPortals,
-  perPortalLimit = Number(process.env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 6),
+  perPortalLimit = Number(process.env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 10),
 } = {}) {
   const portalRows = normalizePortalRows(portals);
 
@@ -70,13 +77,25 @@ export function normalizePortalRows(portals = supportedPortals) {
     .filter(item => item.fieldHints?.discovery?.enabled !== false);
 }
 
-export function searchUrlFor(portal, keyword) {
+export function searchUrlFor(portal, keyword, opts = {}) {
+  const {
+    city = 'Bucuresti',
+    county = 'Ilfov',
+    workModels = ['remote', 'hybrid', 'onsite'],
+  } = opts;
   const slug = keywordSlug(keyword, portal);
-  if (portal === 'ejobs') return `https://www.ejobs.ro/locuri-de-munca/${slug}`;
-  if (portal === 'bestjobs') return `https://www.bestjobs.eu/ro/locuri-de-munca/${slug}`;
-  if (portal === 'hipo') return `https://www.hipo.ro/locuri-de-munca/cautajob/Toate-Domeniile/Toate-Orasele/${slug}`;
+  if (portal === 'ejobs') {
+    return `https://www.ejobs.ro/locuri-de-munca/${slug}?judet=${encodeURIComponent(county)}&oras=${encodeURIComponent(city)}&tip_job=${mapEjobsWorkModels(workModels)}`;
+  }
+  if (portal === 'bestjobs') {
+    return `https://www.bestjobs.eu/ro/locuri-de-munca/${slug}?location=${encodeURIComponent(city.toLowerCase())}&work_type=${mapBestjobsWorkModels(workModels)}`;
+  }
+  if (portal === 'hipo') {
+    return `https://www.hipo.ro/locuri-de-munca/cautajob/Toate-Domeniile/${encodeURIComponent(city)}/${slug}?type_munca=${mapHipoWorkModels(workModels)}`;
+  }
   if (portal === 'linkedin') {
-    return `https://ro.linkedin.com/jobs/search?keywords=${encodeURIComponent(keyword)}&location=Romania`;
+    const linkedinLocation = /^bucuresti$/i.test(city) ? 'Bucharest, Romania' : `${city}, Romania`;
+    return `https://ro.linkedin.com/jobs/search?keywords=${encodeURIComponent(keyword)}&location=${encodeURIComponent(linkedinLocation)}&f_WT=${encodeURIComponent(mapLinkedinFWT(workModels))}`;
   }
   throw new Error(`Unsupported portal: ${portal}`);
 }
@@ -98,17 +117,14 @@ export function keywordSlug(keyword, portal) {
 }
 
 export function keywordsFromProfile(profile = {}) {
-  return unique([
+  return expandRomanianAliases(unique([
     ...(profile.targetRoles || []),
     ...(profile.skills || []),
-    'Technical Support',
-    'Application Support',
-    'MDM',
-    'Workspace ONE',
-    'Python FastAPI',
     'Full Stack Developer',
-    'Automation Engineer',
-  ]).filter(Boolean);
+    'AI Engineer',
+    'Backend Engineer',
+    'Python Developer',
+  ]).filter(Boolean));
 }
 
 function keywordsForPortal(row, fallbackKeywords) {
@@ -118,6 +134,52 @@ function keywordsForPortal(row, fallbackKeywords) {
 
 function unique(values) {
   return [...new Set(values.map(value => String(value).trim()).filter(Boolean))];
+}
+
+function expandRomanianAliases(values) {
+  const expanded = [];
+  for (const value of values) {
+    expanded.push(value);
+    const aliases = romanianKeywordAliases.get(String(value).trim().toLowerCase()) || [];
+    expanded.push(...aliases);
+  }
+  return unique(expanded);
+}
+
+function mapEjobsWorkModels(workModels = []) {
+  return mapWorkModels(workModels, {
+    remote: 'remote',
+    hybrid: 'hibrid',
+    onsite: 'la-birou',
+  }).join(',');
+}
+
+function mapBestjobsWorkModels(workModels = []) {
+  return mapWorkModels(workModels, {
+    remote: 'remote',
+    hybrid: 'hybrid',
+    onsite: 'on-site',
+  }).join(',');
+}
+
+function mapHipoWorkModels(workModels = []) {
+  return mapWorkModels(workModels, {
+    remote: 'remote',
+    hybrid: 'hibrid',
+    onsite: 'la-sediu',
+  }).join(',');
+}
+
+function mapLinkedinFWT(workModels = []) {
+  return mapWorkModels(workModels, {
+    onsite: '1',
+    remote: '2',
+    hybrid: '3',
+  }).join(',');
+}
+
+function mapWorkModels(workModels, table) {
+  return unique(workModels.map(model => table[String(model).trim().toLowerCase()]).filter(Boolean));
 }
 
 function capitalize(value) {

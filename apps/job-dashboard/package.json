@@ -9,6 +9,7 @@
     "migrate": "node src/schema.mjs",
     "import:local": "node src/importers.mjs",
     "discover": "node runner/portal-discovery-runner.mjs",
+    "backfill:cv-match": "node src/scripts/backfill-cv-match.mjs",
     "score:ai": "node runner/ai-fit-runner.mjs",
     "draft:ai": "node runner/ai-draft-runner.mjs",
     "test:models": "node runner/test-ai-models.mjs",
@@ -21,7 +22,9 @@
     "dotenv": "^17.0.0",
     "js-yaml": "^4.1.1",
     "pg": "^8.13.1",
-    "playwright": "^1.58.1"
+    "playwright": "^1.58.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.10.0"

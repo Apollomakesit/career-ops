@@ -1,6 +1,8 @@
 # Personal data (user fills these)
 cv.md
 article-digest.md
+projects.md
+projects.json
 data/applications.md
 data/pipeline.md
 data/scan-history.tsv

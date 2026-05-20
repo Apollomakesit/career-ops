@@ -29,6 +29,7 @@ function createStore() {
       return portal;
     },
     async listJobs() { return state.jobs; },
+    async listJobDetails(id) { return state.jobs.find(job => job.id === id) || null; },
     async getJob(id) { return state.jobs.find(job => job.id === id) || null; },
     async createJob(job) {
       const created = { id: 'job-1', ...job };
@@ -96,6 +97,7 @@ function createStore() {
       return command;
     },
     async listEvents() { return state.events; },
+    async rescoreCvMatches() { return { updated: state.jobs.length }; },
   };
 }
 
@@ -130,6 +132,29 @@ test('serves canonical CV markdown for dashboard viewing', async () => {
   assert.equal(response.body.markdown, '# Ioan Stefan Vlaicu\n\n## Experience');
 });
 
+test('updates canonical CV markdown and can request a deterministic re-score', async () => {
+  const writes = [];
+  const put = await dispatchApi({
+    method: 'PUT',
+    url: '/api/cv',
+    body: { markdown: '# Updated CV' },
+  }, createStore(), {
+    writeCv: async markdown => {
+      writes.push(markdown);
+      return { markdown };
+    },
+  });
+  const rescore = await dispatchApi({
+    method: 'POST',
+    url: '/api/cv/rescore-all',
+    body: {},
+  }, createStore());
+
+  assert.equal(put.status, 200);
+  assert.deepEqual(writes, ['# Updated CV']);
+  assert.equal(rescore.body.updated, 0);
+});
+
 test('creates a job with fit scoring', async () => {
   const store = createStore();
   const response = await dispatchApi({
@@ -145,6 +170,33 @@ test('creates a job with fit scoring', async () => {
 
   assert.equal(response.status, 201);
   assert.ok(response.body.fit.score >= 80);
+  assert.ok(response.body.cvMatch);
+  assert.equal(typeof response.body.cvMatch.score, 'number');
+});
+
+test('returns expanded job detail fields', async () => {
+  const store = createStore();
+  store.state.jobs.push({
+    id: 'job-1',
+    title: 'Backend Engineer',
+    company: 'Example',
+    description: 'Full description',
+    requirementsText: 'Python',
+    responsibilitiesText: 'Build APIs',
+    cvMatchedSkills: ['python'],
+    cvMissingSkills: ['kubernetes'],
+    cvMatchedProjects: ['Project Helios'],
+    cvMatchBreakdown: { skills: 80, projects: 60, role: 70 },
+  });
+
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/jobs/job-1/detail',
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.requirementsText, 'Python');
+  assert.deepEqual(response.body.cvMatchedProjects, ['Project Helios']);
 });
 
 test('approves package and exposes approved queue', async () => {

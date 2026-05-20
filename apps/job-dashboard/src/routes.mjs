@@ -1,8 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { clearMatcherContextCache, getMatcherContext, scoreJob } from './cv-matcher.mjs';
+import { invalidateCvCache } from './cv-parser.mjs';
 import { scoreJobFit } from './fit-score.mjs';
+import { invalidateProjectsCache } from './projects-loader.mjs';
 import {
   generateAiFitScore as defaultGenerateAiFitScore,
   generateApplicationPackage as defaultGenerateApplicationPackage,
@@ -19,6 +22,8 @@ export async function dispatchApi(request, store, services = {}) {
   const generateApplicationPackage = services.generateApplicationPackage || defaultGenerateApplicationPackage;
   const generateAiFitScore = services.generateAiFitScore || defaultGenerateAiFitScore;
   const readCv = services.readCv || defaultReadCv;
+  const writeCv = services.writeCv || defaultWriteCv;
+  const fetchImpl = services.fetchImpl || fetch;
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
@@ -31,6 +36,22 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'GET' && url.pathname === '/api/cv') {
       return json(200, { markdown: await readCv() });
+    }
+
+    if (method === 'PUT' && url.pathname === '/api/cv') {
+      const markdown = typeof request.body === 'string' ? request.body : String((request.body || {}).markdown || '');
+      const result = await writeCv(markdown);
+      invalidateCvCache();
+      invalidateProjectsCache();
+      clearMatcherContextCache();
+      return json(200, result || { markdown });
+    }
+
+    if (method === 'POST' && url.pathname === '/api/cv/rescore-all') {
+      if (typeof store.rescoreCvMatches === 'function') {
+        return json(200, await store.rescoreCvMatches());
+      }
+      return json(200, { updated: 0 });
     }
 
     if (method === 'PUT' && url.pathname === '/api/profile') {
@@ -46,7 +67,7 @@ export async function dispatchApi(request, store, services = {}) {
     }
 
     if (method === 'GET' && url.pathname === '/api/jobs') {
-      return json(200, await store.listJobs());
+      return json(200, await store.listJobs(filtersFromSearch(url.searchParams)));
     }
 
     if (method === 'POST' && url.pathname === '/api/jobs') {
@@ -56,7 +77,16 @@ export async function dispatchApi(request, store, services = {}) {
         skills: profile?.skills || [],
         location: profile?.location || '',
       });
-      return json(201, await store.createJob({ ...(request.body || {}), fit }));
+      const cvMatch = scoreJob(request.body || {}, await getMatcherContext());
+      return json(201, await store.createJob({ ...(request.body || {}), fit, cvMatch }));
+    }
+
+    if (method === 'GET' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'detail') {
+      const job = typeof store.getJobDetail === 'function'
+        ? await store.getJobDetail(segments[2])
+        : await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      return json(200, job);
     }
 
     if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'fit') {
@@ -72,6 +102,8 @@ export async function dispatchApi(request, store, services = {}) {
           profile,
           job,
           rulesFit: jobToFit(job),
+          cv: (await getMatcherContext()).cv,
+          projects: (await getMatcherContext()).projects,
           provider: services.aiProvider,
           apiKey: services.aiApiKey ?? services.openaiApiKey,
           model: services.aiModel ?? services.openaiModel,
@@ -95,6 +127,8 @@ export async function dispatchApi(request, store, services = {}) {
         const generated = await generateApplicationPackage({
           profile,
           job,
+          cv: (await getMatcherContext()).cv,
+          projects: (await getMatcherContext()).projects,
           provider: services.aiProvider,
           apiKey: services.aiApiKey ?? services.openaiApiKey,
           model: services.aiModel ?? services.openaiModel,
@@ -152,6 +186,15 @@ export async function dispatchApi(request, store, services = {}) {
       return json(202, await store.createRunnerCommand(request.body || {}));
     }
 
+    if (method === 'POST' && ['/api/runner/pause', '/api/runner/resume', '/api/runner/stop'].includes(url.pathname)) {
+      const action = url.pathname.split('/').at(-1);
+      return json(200, await proxyRunner(fetchImpl, `/${action}`, { method: 'POST', body: request.body || {} }));
+    }
+
+    if (method === 'GET' && url.pathname === '/api/runner/progress') {
+      return json(200, await proxyRunner(fetchImpl, '/progress'));
+    }
+
     if (method === 'POST' && url.pathname === '/api/runner/commands/claim') {
       return json(200, await store.claimRunnerCommand(request.body || {}));
     }
@@ -168,6 +211,15 @@ export async function dispatchApi(request, store, services = {}) {
 
 async function defaultReadCv() {
   return readFile(defaultCvPath, 'utf8');
+}
+
+async function defaultWriteCv(markdown) {
+  const resolved = path.resolve(defaultCvPath);
+  if (!resolved.startsWith(`${repoRoot}${path.sep}`)) {
+    throw new Error('Refusing to write CV outside the repository root.');
+  }
+  await writeFile(resolved, String(markdown || ''), 'utf8');
+  return { markdown: String(markdown || '') };
 }
 
 export function createPostgresStore(pool) {
@@ -240,17 +292,32 @@ export function createPostgresStore(pool) {
       return result.rows[0];
     },
 
-    async listJobs() {
+    async listJobs(filters = {}) {
+      const { where, params } = buildJobsWhere(filters, pool.dialect);
       const result = await pool.query(`
         SELECT id, url, company, title, portal, location, description, source, status,
+               substr(description, 1, 300) AS "descriptionPreview",
                fit_score AS "fitScore", fit_category AS "fitCategory",
                matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
                risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
+               salary_min AS "salaryMin", salary_max AS "salaryMax",
+               salary_currency AS "salaryCurrency", salary_period AS "salaryPeriod",
+               work_model AS "workModel", employment_type AS "employmentType",
+               posted_date AS "postedDate", requirements_text AS "requirementsText",
+               responsibilities_text AS "responsibilitiesText",
+               cv_match_score AS "cvMatchScore",
+               cv_matched_skills AS "cvMatchedSkills",
+               cv_matched_projects AS "cvMatchedProjects",
+               cv_missing_skills AS "cvMissingSkills",
+               cv_match_breakdown AS "cvMatchBreakdown",
                created_at AS "createdAt", updated_at AS "updatedAt"
         FROM jobs
-        ORDER BY updated_at DESC
+        ${where}
+        ${pool.dialect === 'sqlite'
+          ? 'ORDER BY COALESCE(cv_match_score, 0) DESC, COALESCE(fit_score, 0) DESC, updated_at DESC'
+          : 'ORDER BY cv_match_score DESC NULLS LAST, fit_score DESC NULLS LAST, updated_at DESC'}
         LIMIT 200
-      `);
+      `, params);
       return result.rows;
     },
 
@@ -260,6 +327,16 @@ export function createPostgresStore(pool) {
                fit_score AS "fitScore", fit_category AS "fitCategory",
                matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
                risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
+               salary_min AS "salaryMin", salary_max AS "salaryMax",
+               salary_currency AS "salaryCurrency", salary_period AS "salaryPeriod",
+               work_model AS "workModel", employment_type AS "employmentType",
+               posted_date AS "postedDate", requirements_text AS "requirementsText",
+               responsibilities_text AS "responsibilitiesText",
+               cv_match_score AS "cvMatchScore",
+               cv_matched_skills AS "cvMatchedSkills",
+               cv_matched_projects AS "cvMatchedProjects",
+               cv_missing_skills AS "cvMissingSkills",
+               cv_match_breakdown AS "cvMatchBreakdown",
                created_at AS "createdAt", updated_at AS "updatedAt"
         FROM jobs
         WHERE id = $1
@@ -268,15 +345,25 @@ export function createPostgresStore(pool) {
       return result.rows[0] || null;
     },
 
+    async getJobDetail(id) {
+      return this.getJob(id);
+    },
+
     async createJob(job) {
       const fit = job.fit || scoreJobFit(job);
+      const cvMatch = normalizeCvMatchPayload(job.cvMatch || {});
       const result = await pool.query(`
         INSERT INTO jobs (
           url, company, title, portal, location, description, source, status,
           fit_score, fit_category, matched_skills, missing_skills, risk_flags,
-          recommendation, fit_reasons, updated_at
+          recommendation, fit_reasons,
+          salary_min, salary_max, salary_currency, salary_period, work_model,
+          employment_type, posted_date, requirements_text, responsibilities_text,
+          cv_match_score, cv_matched_skills, cv_matched_projects, cv_missing_skills,
+          cv_match_breakdown, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15::jsonb, now())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15::jsonb,
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26::jsonb, $27::jsonb, $28::jsonb, $29::jsonb, now())
         ON CONFLICT (url) DO UPDATE SET
           company = EXCLUDED.company,
           title = EXCLUDED.title,
@@ -292,11 +379,35 @@ export function createPostgresStore(pool) {
           risk_flags = EXCLUDED.risk_flags,
           recommendation = EXCLUDED.recommendation,
           fit_reasons = EXCLUDED.fit_reasons,
+          salary_min = EXCLUDED.salary_min,
+          salary_max = EXCLUDED.salary_max,
+          salary_currency = EXCLUDED.salary_currency,
+          salary_period = EXCLUDED.salary_period,
+          work_model = EXCLUDED.work_model,
+          employment_type = EXCLUDED.employment_type,
+          posted_date = EXCLUDED.posted_date,
+          requirements_text = EXCLUDED.requirements_text,
+          responsibilities_text = EXCLUDED.responsibilities_text,
+          cv_match_score = EXCLUDED.cv_match_score,
+          cv_matched_skills = EXCLUDED.cv_matched_skills,
+          cv_matched_projects = EXCLUDED.cv_matched_projects,
+          cv_missing_skills = EXCLUDED.cv_missing_skills,
+          cv_match_breakdown = EXCLUDED.cv_match_breakdown,
           updated_at = now()
         RETURNING id, url, company, title, portal, location, description, source, status,
                   fit_score AS "fitScore", fit_category AS "fitCategory",
                   matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
-                  risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons"
+                  risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
+                  salary_min AS "salaryMin", salary_max AS "salaryMax",
+                  salary_currency AS "salaryCurrency", salary_period AS "salaryPeriod",
+                  work_model AS "workModel", employment_type AS "employmentType",
+                  posted_date AS "postedDate", requirements_text AS "requirementsText",
+                  responsibilities_text AS "responsibilitiesText",
+                  cv_match_score AS "cvMatchScore",
+                  cv_matched_skills AS "cvMatchedSkills",
+                  cv_matched_projects AS "cvMatchedProjects",
+                  cv_missing_skills AS "cvMissingSkills",
+                  cv_match_breakdown AS "cvMatchBreakdown"
       `, [
         job.url || `manual:${Date.now()}`,
         job.company || '',
@@ -313,9 +424,23 @@ export function createPostgresStore(pool) {
         JSON.stringify(fit.riskFlags),
         fit.recommendation,
         JSON.stringify(fit.reasons),
+        nullableNumber(job.salary_min ?? job.salaryMin),
+        nullableNumber(job.salary_max ?? job.salaryMax),
+        String(job.salary_currency ?? job.salaryCurrency ?? ''),
+        String(job.salary_period ?? job.salaryPeriod ?? ''),
+        String(job.work_model ?? job.workModel ?? 'unknown'),
+        String(job.employment_type ?? job.employmentType ?? 'unknown'),
+        job.posted_date ?? job.postedDate ?? null,
+        String(job.requirements_text ?? job.requirementsText ?? ''),
+        String(job.responsibilities_text ?? job.responsibilitiesText ?? ''),
+        cvMatch.score,
+        JSON.stringify(cvMatch.matchedSkills),
+        JSON.stringify(cvMatch.matchedProjects),
+        JSON.stringify(cvMatch.missingSkills),
+        JSON.stringify(cvMatch.breakdown),
       ]);
-      await appendEvent(pool, 'job', result.rows[0].id, 'job_created', `Job created: ${job.company || ''} ${job.title || ''}`.trim(), { fit });
-      return { ...result.rows[0], fit };
+      await appendEvent(pool, 'job', result.rows[0].id, 'job_created', `Job created: ${job.company || ''} ${job.title || ''}`.trim(), { fit, cvMatch });
+      return { ...result.rows[0], fit, cvMatch };
     },
 
     async updateJobFit(id, fit) {
@@ -347,6 +472,50 @@ export function createPostgresStore(pool) {
       ]);
       await appendEvent(pool, 'job', id, 'job_fit_updated', `AI fit updated: ${normalized.score}%`, normalized);
       return result.rows[0] || null;
+    },
+
+    async updateJobCvMatch(id, cvMatch) {
+      const normalized = normalizeCvMatchPayload(cvMatch);
+      const result = await pool.query(`
+        UPDATE jobs
+        SET cv_match_score = $2,
+            cv_matched_skills = $3::jsonb,
+            cv_matched_projects = $4::jsonb,
+            cv_missing_skills = $5::jsonb,
+            cv_match_breakdown = $6::jsonb,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING id, cv_match_score AS "cvMatchScore",
+                  cv_matched_skills AS "cvMatchedSkills",
+                  cv_matched_projects AS "cvMatchedProjects",
+                  cv_missing_skills AS "cvMissingSkills",
+                  cv_match_breakdown AS "cvMatchBreakdown"
+      `, [
+        id,
+        normalized.score,
+        JSON.stringify(normalized.matchedSkills),
+        JSON.stringify(normalized.matchedProjects),
+        JSON.stringify(normalized.missingSkills),
+        JSON.stringify(normalized.breakdown),
+      ]);
+      return result.rows[0] || null;
+    },
+
+    async rescoreCvMatches() {
+      const context = await getMatcherContext();
+      const result = await pool.query(`
+        SELECT id, title, description, requirements_text AS "requirementsText",
+               responsibilities_text AS "responsibilitiesText"
+        FROM jobs
+      `);
+      let updated = 0;
+      for (const job of result.rows) {
+        const cvMatch = scoreJob(job, context);
+        await this.updateJobCvMatch(job.id, cvMatch);
+        updated += 1;
+      }
+      await appendEvent(pool, 'job', null, 'cv_match_backfilled', `Re-scored ${updated} job(s) against cv.md`, {});
+      return { updated };
     },
 
     async listPackages(filter = {}) {
@@ -598,6 +767,102 @@ function normalizeFitPayload(fit = {}) {
     recommendation: String(fit.recommendation || 'review').trim(),
     reasons: arrayOfStrings(fit.reasons || fit.fitReasons),
   };
+}
+
+function normalizeCvMatchPayload(cvMatch = {}) {
+  const score = Number(cvMatch.score ?? cvMatch.cvMatchScore ?? 0);
+  const breakdown = cvMatch.breakdown || cvMatch.cvMatchBreakdown || {};
+  return {
+    score: Number.isFinite(score) ? Math.max(0, Math.min(100, Math.round(score))) : 0,
+    matchedSkills: arrayOfStrings(cvMatch.matchedSkills || cvMatch.cvMatchedSkills),
+    missingSkills: arrayOfStrings(cvMatch.missingSkills || cvMatch.cvMissingSkills),
+    matchedProjects: arrayOfStrings(cvMatch.matchedProjects || cvMatch.cvMatchedProjects),
+    breakdown: {
+      skills: clampPercent(breakdown.skills),
+      projects: clampPercent(breakdown.projects),
+      role: clampPercent(breakdown.role),
+    },
+  };
+}
+
+function clampPercent(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : 0;
+}
+
+function nullableNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function filtersFromSearch(searchParams) {
+  return {
+    workModel: csvParam(searchParams.get('workModel')),
+    portal: csvParam(searchParams.get('portal')),
+    minSalary: numericParam(searchParams.get('minSalary')),
+    maxSalary: numericParam(searchParams.get('maxSalary')),
+    currency: searchParams.get('currency') || '',
+    postedWithinDays: numericParam(searchParams.get('postedWithinDays')),
+    minMatch: numericParam(searchParams.get('minMatch')),
+    maxMatch: numericParam(searchParams.get('maxMatch')),
+    q: searchParams.get('q') || '',
+  };
+}
+
+function buildJobsWhere(filters = {}, dialect = 'postgres') {
+  const clauses = [];
+  const params = [];
+  const add = value => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  if (filters.workModel?.length) {
+    clauses.push(`work_model IN (${filters.workModel.map(add).join(', ')})`);
+  }
+  if (filters.portal?.length) {
+    clauses.push(`portal IN (${filters.portal.map(add).join(', ')})`);
+  }
+  if (filters.minSalary != null) clauses.push(`salary_min >= ${add(filters.minSalary)}`);
+  if (filters.maxSalary != null) clauses.push(`salary_max <= ${add(filters.maxSalary)}`);
+  if (filters.currency) clauses.push(`salary_currency = ${add(filters.currency)}`);
+  if (filters.minMatch != null) clauses.push(`cv_match_score >= ${add(filters.minMatch)}`);
+  if (filters.maxMatch != null) clauses.push(`cv_match_score <= ${add(filters.maxMatch)}`);
+  if (filters.q) {
+    const placeholder = add(`%${String(filters.q).toLowerCase()}%`);
+    clauses.push(`(LOWER(title) LIKE ${placeholder} OR LOWER(description) LIKE ${placeholder})`);
+  }
+  if (filters.postedWithinDays != null) {
+    const placeholder = add(filters.postedWithinDays);
+    clauses.push(dialect === 'sqlite'
+      ? `posted_date IS NOT NULL AND datetime(posted_date) >= datetime('now', '-' || ${placeholder} || ' days')`
+      : `posted_date IS NOT NULL AND posted_date >= now() - (${placeholder}::text || ' days')::interval`);
+  }
+  return {
+    where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  };
+}
+
+async function proxyRunner(fetchImpl, pathName, { method = 'GET', body } = {}) {
+  const response = await fetchImpl(`http://127.0.0.1:48731${pathName}`, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!response.ok) {
+    return { error: 'runner_unreachable', status: response.status };
+  }
+  return response.json();
+}
+
+function csvParam(value) {
+  return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+}
+
+function numericParam(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function arrayOfStrings(value) {

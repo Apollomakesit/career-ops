@@ -32,14 +32,25 @@ const job = {
   description: 'Support ServiceNow workflows, MDM devices, and Python automation.',
   fitScore: 91,
   matchedSkills: ['ServiceNow', 'Workspace ONE', 'Python'],
+  cvMatchScore: 88,
+  cvMatchedSkills: ['python', 'servicenow'],
+  cvMissingSkills: ['kubernetes'],
+  cvMatchedProjects: ['ServiceNow Form Filler'],
 };
 
 test('builds a package prompt from profile and job context', () => {
-  const prompt = buildPackagePrompt({ profile, job });
+  const prompt = buildPackagePrompt({
+    profile,
+    job,
+    cv: { raw: '# CV\n\nPython and ServiceNow support automation.' },
+    projects: [{ name: 'ServiceNow Form Filler', description: 'Chrome extension', tech: ['TypeScript'] }],
+  });
 
   assert.match(prompt, /Ioan Stefan Vlaicu/);
   assert.match(prompt, /Application Support Engineer/);
   assert.match(prompt, /ServiceNow/);
+  assert.match(prompt, /CV document/);
+  assert.match(prompt, /ServiceNow Form Filler/);
   assert.match(prompt, /JSON/);
 });
 
@@ -48,12 +59,16 @@ test('builds a fit scoring prompt from profile, job, and rules score', () => {
     profile,
     job,
     rulesFit: { score: 91, matchedSkills: ['ServiceNow'], missingSkills: ['Azure'] },
+    cv: { raw: '# CV\n\nPython and ServiceNow support automation.' },
+    projects: [{ name: 'ServiceNow Form Filler', description: 'Chrome extension', tech: ['TypeScript'] }],
   });
 
   assert.match(prompt, /OwlApply-style/);
   assert.match(prompt, /Ioan Stefan Vlaicu/);
   assert.match(prompt, /Application Support Engineer/);
   assert.match(prompt, /ServiceNow/);
+  assert.match(prompt, /Deterministic CV match/);
+  assert.match(prompt, /cv_match_score: 88/);
   assert.match(prompt, /91/);
 });
 

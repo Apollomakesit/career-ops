@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { controlCorsHeaders, createControlHandler } from '../runner/control-server-core.mjs';
+import { createRunState } from '../runner/run-state.mjs';
 
 test('control handler returns model options and gateway availability', async () => {
   const handler = createControlHandler({
@@ -134,4 +135,26 @@ test('control CORS headers allow HTTPS dashboard calls into localhost', () => {
 
   assert.equal(headers['access-control-allow-origin'], '*');
   assert.equal(headers['access-control-allow-private-network'], 'true');
+});
+
+test('control handler exposes pause, resume, stop, and progress state', async () => {
+  const runState = createRunState({ persist: false });
+  const handler = createControlHandler({
+    loadConfig: () => ({}),
+    runState,
+  });
+
+  const paused = await handler({ method: 'POST', url: '/pause', body: { portal: 'ejobs' } });
+  assert.equal(paused.status, 200);
+  assert.equal(paused.body.perPortal.ejobs.paused, true);
+
+  const progress = await handler({ method: 'GET', url: '/progress', body: null });
+  assert.equal(progress.status, 200);
+  assert.equal(progress.body.perPortal.ejobs.status, 'paused');
+
+  const resumed = await handler({ method: 'POST', url: '/resume', body: { portal: 'ejobs' } });
+  assert.equal(resumed.body.perPortal.ejobs.paused, false);
+
+  const stopped = await handler({ method: 'POST', url: '/stop', body: {} });
+  assert.equal(stopped.body.global.cancelled, true);
 });

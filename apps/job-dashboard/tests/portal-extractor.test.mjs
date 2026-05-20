@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
 
+import { extractGenericDetail } from '../runner/extractors/shared.mjs';
 import {
   cleanJobDetailText,
   dedupeJobs,
@@ -152,4 +154,69 @@ test('merges full detail text over listing snippets', () => {
   assert.match(merged.description, /Requirements/);
   assert.match(merged.description, /Benefits/);
   assert.equal(merged.source, 'portal-discovery:ejobs:detail');
+});
+
+test('detail extractor expands Romanian show-more controls before reading text', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <main id="job">
+        <h1>Programator Python</h1>
+        <p>Construieste automatizari interne.</p>
+        <button type="button" onclick="document.querySelector('#hidden').hidden = false; this.remove()">Vezi mai mult</button>
+        <section id="hidden" hidden>
+          <h2>Cerințe</h2>
+          <p>Experienta cu Python, TypeScript si PostgreSQL.</p>
+          <h2>Responsabilități</h2>
+          <p>Dezvolti API-uri si fluxuri Playwright pentru echipa.</p>
+        </section>
+      </main>
+    `);
+
+    const detail = await extractGenericDetail(page, { descriptionSelector: '#job' });
+
+    assert.match(detail.description, /Python, TypeScript si PostgreSQL/);
+    assert.match(detail.requirements_text, /TypeScript/);
+    assert.match(detail.responsibilities_text, /Playwright/);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('detail extractor trims body fallback to the actual job section', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <body>
+        <nav>Skip to main content Jobs Messaging Notifications</nav>
+        <h1>Frontend Developer</h1>
+        <section>
+          <h2>About the job</h2>
+          <p>Build React interfaces for internal platforms.</p>
+          <h3>Responsibilities</h3>
+          <p>Own TypeScript components and Playwright flows.</p>
+          <h3>Requirements</h3>
+          <p>React, TypeScript, PostgreSQL.</p>
+        </section>
+        <aside>
+          <h2>About the company</h2>
+          <p>Company follower counts and unrelated feed posts.</p>
+        </aside>
+        <section>Similar jobs</section>
+      </body>
+    `);
+
+    const detail = await extractGenericDetail(page);
+
+    assert.match(detail.description, /Build React interfaces/);
+    assert.match(detail.description, /Playwright flows/);
+    assert.doesNotMatch(detail.description, /Skip to main content/);
+    assert.doesNotMatch(detail.description, /Company follower counts/);
+    assert.match(detail.requirements_text, /PostgreSQL/);
+    assert.match(detail.responsibilities_text, /TypeScript components/);
+  } finally {
+    await browser.close();
+  }
 });

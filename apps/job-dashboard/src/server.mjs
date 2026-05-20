@@ -26,6 +26,10 @@ export function createDashboardServer({
     }
 
     if (req.url?.startsWith('/api/')) {
+      if (req.method === 'GET' && req.url.startsWith('/api/runner/events')) {
+        await proxyRunnerEvents(res);
+        return;
+      }
       const body = await readJsonBody(req);
       const response = await dispatchApi({ method: req.method || 'GET', url: req.url, body }, store, services);
       writeJson(res, response.status, response.body);
@@ -34,6 +38,38 @@ export function createDashboardServer({
 
     serveStatic(req, res, publicRoot);
   });
+}
+
+async function proxyRunnerEvents(res) {
+  let upstream;
+  try {
+    upstream = await fetch('http://127.0.0.1:48731/events');
+  } catch {
+    writeJson(res, 502, { error: 'runner_unreachable' });
+    return;
+  }
+  if (!upstream.ok || !upstream.body) {
+    writeJson(res, upstream.status || 502, { error: 'runner_events_unavailable' });
+    return;
+  }
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  const reader = upstream.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+  } catch {
+    // Client disconnected.
+  } finally {
+    reader.releaseLock();
+    res.end();
+  }
 }
 
 export function resolveDashboardServices({

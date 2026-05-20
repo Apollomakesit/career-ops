@@ -11,6 +11,8 @@ const state = {
   aiGateway: {},
   accounts: [],
   cvMarkdown: '',
+  runnerProgress: {},
+  sort: { key: 'cvMatchScore', direction: 'desc' },
 };
 
 let token = localStorage.getItem('careerOpsDashboardToken') || '';
@@ -39,20 +41,38 @@ document.getElementById('testCheapAiModelsButton').addEventListener('click', tes
 document.querySelectorAll('[data-start-runner]').forEach(button => {
   button.addEventListener('click', () => startRunner(button.dataset.startRunner));
 });
+document.querySelectorAll('[data-runner-action]').forEach(button => {
+  button.addEventListener('click', () => runnerAction(button.dataset.runnerAction));
+});
+['filterWorkModel', 'filterPortal', 'filterMinSalary', 'filterMaxSalary', 'filterCurrency', 'filterPostedWithin', 'filterMinMatch', 'filterSearch'].forEach(id => {
+  const element = document.getElementById(id);
+  element.addEventListener('input', applyFilters);
+  element.addEventListener('change', applyFilters);
+});
+document.getElementById('saveCvButton').addEventListener('click', saveCv);
+document.getElementById('rescoreCvButton').addEventListener('click', rescoreCv);
+document.getElementById('cvEditor').addEventListener('input', () => {
+  state.cvMarkdown = document.getElementById('cvEditor').value;
+  renderCvPreview();
+});
 document.getElementById('refreshAccountsButton').addEventListener('click', loadAccounts);
 document.getElementById('loginAnthropicButton').addEventListener('click', () => startAccountLogin('anthropic'));
 document.getElementById('loginOpenaiButton').addEventListener('click', () => startAccountLogin('openai'));
 document.querySelector('[data-view="accounts"]').addEventListener('click', loadAccounts);
 
+hydrateFiltersFromLocation();
 await loadAll();
 await loadRunnerStatus({ alertOnError: false });
+await loadRunnerProgress();
+connectRunnerEvents();
 setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
+setInterval(() => loadRunnerProgress(), 2000);
 
 async function loadAll() {
   const [profile, portals, jobs, packagesList, events, cv] = await Promise.all([
     api('/api/profile'),
     api('/api/portals'),
-    api('/api/jobs'),
+    api(`/api/jobs${jobsQueryString()}`),
     api('/api/packages'),
     api('/api/events'),
     api('/api/cv').catch(() => ({ markdown: 'CV view is waiting for the dashboard API to reload. The canonical file is cv.md in the project root.' })),
@@ -68,36 +88,50 @@ async function loadAll() {
 
 function renderJobs() {
   const target = document.getElementById('jobsTable');
-  const rows = state.jobs.map(job => `
-    <div class="row">
-      <div class="score ${scoreClass(job.fitScore)}">${job.fitScore || 0}%</div>
-      <div><strong>${escapeHtml(job.company || '')}</strong><br><span class="muted">${escapeHtml(job.portal || '')}</span></div>
+  const rows = sortedJobs(state.jobs).map(job => `
+    <div class="row job-row">
+      <div class="score ${scoreClass(job.cvMatchScore)}">${job.cvMatchScore || 0}%</div>
+      <div class="score ${scoreClass(job.fitScore)}">${job.fitScore ? `${job.fitScore}%` : '-'}</div>
       <div>
         ${job.url ? `<a class="job-title-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">${escapeHtml(job.title || '')}</a>` : escapeHtml(job.title || '')}
-        <br><span class="muted">${escapeHtml(job.location || '')}</span>
+        <br><span class="portal-chip">${escapeHtml(portalLabel(job.portal || ''))}</span> <span class="muted">${escapeHtml(job.location || '')}</span>
       </div>
-      <div>${escapeHtml(job.recommendation || 'review')}<br><span class="muted">${escapeHtml(job.fitCategory || '')}</span></div>
+      <div><strong>${escapeHtml(job.company || '')}</strong></div>
+      <div>${badge(job.workModel || 'unknown')}</div>
+      <div>${formatSalary(job)}</div>
+      <div>${formatRelative(job.postedDate)}</div>
       <div>${escapeHtml(job.status || 'discovered')}</div>
       <div class="row-actions">
         <button class="secondary-button" data-details-job="${job.id}">Details</button>
         ${job.url ? `<a class="secondary-button action-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">Open</a>` : ''}
-        <button class="secondary-button" data-generate-job="${job.id}">Generate AI Draft</button>
+        <button class="secondary-button" data-score-ai-job="${job.id}">AI Score</button>
       </div>
     </div>
   `).join('');
 
   target.innerHTML = `
     <div class="row header">
-      <div>Fit</div><div>Company</div><div>Role</div><div>Recommendation</div><div>Status</div><div>Action</div>
+      <button data-sort-key="cvMatchScore">CV Match</button>
+      <button data-sort-key="fitScore">AI Fit</button>
+      <button data-sort-key="title">Title</button>
+      <button data-sort-key="company">Company</button>
+      <button data-sort-key="workModel">Work</button>
+      <button data-sort-key="salaryMin">Salary</button>
+      <button data-sort-key="postedDate">Posted</button>
+      <button data-sort-key="status">Status</button>
+      <div>Actions</div>
     </div>
     ${rows || '<div class="item"><h3>No jobs yet</h3><p>Add a job manually or import scanned jobs into the database.</p></div>'}
   `;
 
-  target.querySelectorAll('[data-generate-job]').forEach(button => {
-    button.addEventListener('click', () => generatePackage(button.dataset.generateJob, button));
+  target.querySelectorAll('[data-score-ai-job]').forEach(button => {
+    button.addEventListener('click', () => scoreWithAi(button.dataset.scoreAiJob, button));
   });
   target.querySelectorAll('[data-details-job]').forEach(button => {
     button.addEventListener('click', () => showJobDetails(button.dataset.detailsJob));
+  });
+  target.querySelectorAll('[data-sort-key]').forEach(button => {
+    button.addEventListener('click', () => sortJobs(button.dataset.sortKey));
   });
 }
 
@@ -178,50 +212,55 @@ function renderEvents() {
 }
 
 function renderCv() {
-  document.getElementById('cvMarkdown').innerHTML = `<code>${escapeHtml(state.cvMarkdown || 'No CV loaded yet.')}</code>`;
+  document.getElementById('cvEditor').value = state.cvMarkdown || '';
+  renderCvPreview();
 }
 
-function showJobDetails(jobId) {
-  const job = state.jobs.find(item => item.id === jobId);
+async function showJobDetails(jobId) {
+  const job = await api(`/api/jobs/${jobId}/detail`).catch(() => state.jobs.find(item => item.id === jobId));
   if (!job) return;
   document.getElementById('jobDetailsTitle').textContent = job.title || 'Job details';
-  document.getElementById('jobDetailsMeta').textContent = [job.company, job.portal, job.location].filter(Boolean).join(' · ');
+  document.getElementById('jobDetailsMeta').textContent = [job.company, portalLabel(job.portal), job.location, job.workModel].filter(Boolean).join(' - ');
   document.getElementById('jobDetailsBody').innerHTML = `
     <section class="details-grid">
       <article>
-        <h3>Match</h3>
-        <div class="score-large ${scoreClass(job.fitScore)}">${job.fitScore || 0}%</div>
-        <p><strong>Recommendation:</strong> ${escapeHtml(job.recommendation || 'review')}</p>
-        <p><strong>Category:</strong> ${escapeHtml(job.fitCategory || 'unclassified')}</p>
+        <h3>CV Match</h3>
+        <div class="score-large ${scoreClass(job.cvMatchScore)}">${job.cvMatchScore || 0}%</div>
+        ${renderBreakdown(job.cvMatchBreakdown)}
       </article>
       <article>
-        <h3>Job Link</h3>
+        <h3>Actions</h3>
         ${job.url ? `<a class="primary-button action-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">Open original posting</a>` : '<p class="muted">No job URL captured.</p>'}
+        <button class="secondary-button detail-ai-button" data-score-ai-job="${job.id}">Score with AI</button>
       </article>
-    </section>
-    <section>
-      <h3>Why This Score</h3>
-      ${renderList(job.fitReasons)}
     </section>
     <section class="details-grid">
       <article>
-        <h3>Matched CV Skills</h3>
-        ${renderTags(job.matchedSkills)}
+        <h3>Matched skills</h3>
+        ${renderTags(job.cvMatchedSkills, 'tag-good')}
       </article>
       <article>
-        <h3>Missing Or Unclear</h3>
-        ${renderTags(job.missingSkills)}
+        <h3>Missing skills</h3>
+        ${renderTags(job.cvMissingSkills, 'tag-bad')}
       </article>
       <article>
-        <h3>Risk Flags</h3>
-        ${renderTags(job.riskFlags)}
+        <h3>Matched projects</h3>
+        ${renderTags(job.cvMatchedProjects, 'tag-project')}
+      </article>
+      <article>
+        <h3>AI reasons</h3>
+        ${renderList(job.fitReasons)}
       </article>
     </section>
     <section>
-      <h3>Captured Description</h3>
-      <pre class="description-panel"><code>${escapeHtml(job.description || 'No description captured yet.')}</code></pre>
+      <details open><summary>Description</summary><div class="markdown-preview">${markdown(job.description || 'No description captured yet.')}</div></details>
+      <details><summary>Requirements</summary><div class="markdown-preview">${markdown(job.requirementsText || 'No requirements section captured yet.')}</div></details>
+      <details><summary>Responsibilities</summary><div class="markdown-preview">${markdown(job.responsibilitiesText || 'No responsibilities section captured yet.')}</div></details>
     </section>
   `;
+  document.querySelectorAll('.detail-ai-button').forEach(button => {
+    button.addEventListener('click', () => scoreWithAi(button.dataset.scoreAiJob, button));
+  });
   document.getElementById('jobDetailsDialog').showModal();
 }
 
@@ -257,6 +296,21 @@ async function generatePackage(jobId, button) {
   }
 }
 
+async function scoreWithAi(jobId, button) {
+  button.disabled = true;
+  const previousText = button.textContent;
+  button.textContent = 'Scoring...';
+  try {
+    await api(`/api/jobs/${jobId}/fit/generate`, { method: 'POST', body: {} });
+    await loadAll();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = previousText;
+  }
+}
+
 async function saveProfile() {
   await api('/api/profile', {
     method: 'PUT',
@@ -274,6 +328,32 @@ async function saveProfile() {
     },
   });
   await loadAll();
+}
+
+async function saveCv() {
+  await api('/api/cv', {
+    method: 'PUT',
+    body: { markdown: document.getElementById('cvEditor').value },
+  });
+  await loadAll();
+}
+
+async function rescoreCv() {
+  const button = document.getElementById('rescoreCvButton');
+  const previous = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Re-scoring...';
+  try {
+    const result = await api('/api/cv/rescore-all', { method: 'POST', body: {} });
+    await loadAll();
+    button.textContent = `Re-scored ${result.updated || 0}`;
+    setTimeout(() => { button.textContent = previous; }, 1600);
+  } catch (error) {
+    alert(error.message);
+    button.textContent = previous;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function savePortal(portal, button) {
@@ -326,6 +406,25 @@ async function loadRunnerStatus({ alertOnError = false } = {}) {
       if (alertOnError) alert('Local runner is not reachable yet. Start it with npm run runner:control --prefix apps/job-dashboard');
     }
   }
+}
+
+async function loadRunnerProgress() {
+  try {
+    state.runnerProgress = await api('/api/runner/progress');
+  } catch {
+    state.runnerProgress = {};
+  }
+  renderPortalProgress();
+}
+
+function connectRunnerEvents() {
+  if (!window.EventSource) return;
+  const events = new EventSource('/api/runner/events');
+  events.addEventListener('progress', event => {
+    state.runnerProgress = JSON.parse(event.data || '{}');
+    renderPortalProgress();
+  });
+  events.onerror = () => events.close();
 }
 
 async function loadRunnerLogs(runner = 'discover') {
@@ -505,6 +604,48 @@ async function startRunner(runner) {
     await api('/api/runner/commands', { method: 'POST', body: { runner } });
   }
   await loadRunnerStatus({ alertOnError: true });
+  await loadRunnerProgress();
+}
+
+async function runnerAction(action, portal = '') {
+  await api(`/api/runner/${action}`, {
+    method: 'POST',
+    body: portal ? { portal } : {},
+  });
+  await loadRunnerProgress();
+}
+
+function renderPortalProgress() {
+  const perPortal = state.runnerProgress.perPortal || {};
+  const target = document.getElementById('portalProgressCards');
+  if (!target) return;
+  target.innerHTML = ['ejobs', 'bestjobs', 'hipo', 'linkedin'].map(portal => {
+    const item = perPortal[portal] || {};
+    return `
+      <article class="portal-progress-card">
+        <div class="item-head">
+          <h3>${escapeHtml(portalLabel(portal))}</h3>
+          ${badge(item.status || 'idle')}
+        </div>
+        <div class="progress-counts">
+          <span><strong>${item.discovered || 0}</strong> discovered</span>
+          <span><strong>${item.matched || 0}</strong> matched</span>
+          <span><strong>${item.imported || 0}</strong> imported</span>
+          <span><strong>${item.errors || 0}</strong> errors</span>
+        </div>
+        <p class="muted truncate">${escapeHtml(item.lastUrl || '')}</p>
+        ${item.lastError ? `<p class="error-text truncate">${escapeHtml(item.lastError)}</p>` : ''}
+        <div class="button-row">
+          <button class="secondary-button" data-portal-action="pause" data-portal="${portal}">Pause</button>
+          <button class="secondary-button" data-portal-action="resume" data-portal="${portal}">Resume</button>
+          <button class="secondary-button danger" data-portal-action="stop" data-portal="${portal}">Stop</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+  target.querySelectorAll('[data-portal-action]').forEach(button => {
+    button.addEventListener('click', () => runnerAction(button.dataset.portalAction, button.dataset.portal));
+  });
 }
 
 async function api(path, options = {}) {
@@ -550,10 +691,141 @@ function renderList(items = []) {
   return `<ul class="detail-list">${values.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
 }
 
-function renderTags(items = []) {
+function renderTags(items = [], extraClass = '') {
   const values = Array.isArray(items) ? items.filter(Boolean) : [];
   if (values.length === 0) return '<p class="muted">None recorded.</p>';
-  return `<div class="tag-list">${values.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('')}</div>`;
+  return `<div class="tag-list">${values.map(item => `<span class="tag ${extraClass}">${escapeHtml(item)}</span>`).join('')}</div>`;
+}
+
+function renderBreakdown(breakdown = {}) {
+  const items = [
+    ['Skills', breakdown.skills || 0],
+    ['Projects', breakdown.projects || 0],
+    ['Role', breakdown.role || 0],
+  ];
+  return `<div class="breakdown">${items.map(([label, value]) => `
+    <label>${label}<meter min="0" max="100" value="${Number(value) || 0}"></meter><span>${Number(value) || 0}%</span></label>
+  `).join('')}</div>`;
+}
+
+function sortedJobs(jobs) {
+  const { key, direction } = state.sort;
+  const sign = direction === 'asc' ? 1 : -1;
+  return [...jobs].sort((a, b) => {
+    const av = a[key] ?? '';
+    const bv = b[key] ?? '';
+    if (typeof av === 'number' || typeof bv === 'number') return (Number(av || 0) - Number(bv || 0)) * sign;
+    return String(av).localeCompare(String(bv)) * sign;
+  });
+}
+
+function sortJobs(key) {
+  state.sort = {
+    key,
+    direction: state.sort.key === key && state.sort.direction === 'desc' ? 'asc' : 'desc',
+  };
+  renderJobs();
+}
+
+async function applyFilters() {
+  updateLocationQuery();
+  await loadAll();
+}
+
+function jobsQueryString() {
+  const params = new URLSearchParams(window.location.search);
+  const selected = new URLSearchParams();
+  for (const key of ['workModel', 'portal', 'minSalary', 'maxSalary', 'currency', 'postedWithinDays', 'minMatch', 'q']) {
+    const value = params.get(key);
+    if (value) selected.set(key, value);
+  }
+  const text = selected.toString();
+  return text ? `?${text}` : '';
+}
+
+function updateLocationQuery() {
+  const params = new URLSearchParams(window.location.search);
+  setParam(params, 'workModel', selectedValues('filterWorkModel').join(','));
+  setParam(params, 'portal', selectedValues('filterPortal').join(','));
+  setParam(params, 'minSalary', value('filterMinSalary'));
+  setParam(params, 'maxSalary', value('filterMaxSalary'));
+  setParam(params, 'currency', value('filterCurrency'));
+  setParam(params, 'postedWithinDays', value('filterPostedWithin'));
+  setParam(params, 'minMatch', value('filterMinMatch') === '0' ? '' : value('filterMinMatch'));
+  setParam(params, 'q', value('filterSearch'));
+  history.replaceState(null, '', `${location.pathname}${params.toString() ? `?${params}` : ''}`);
+}
+
+function hydrateFiltersFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  setSelectedValues('filterWorkModel', (params.get('workModel') || '').split(',').filter(Boolean));
+  setSelectedValues('filterPortal', (params.get('portal') || '').split(',').filter(Boolean));
+  setValue('filterMinSalary', params.get('minSalary') || '');
+  setValue('filterMaxSalary', params.get('maxSalary') || '');
+  setValue('filterCurrency', params.get('currency') || '');
+  setValue('filterPostedWithin', params.get('postedWithinDays') || '');
+  setValue('filterMinMatch', params.get('minMatch') || '0');
+  setValue('filterSearch', params.get('q') || '');
+}
+
+function selectedValues(id) {
+  return [...document.getElementById(id).selectedOptions].map(option => option.value);
+}
+
+function setSelectedValues(id, values) {
+  const wanted = new Set(values);
+  [...document.getElementById(id).options].forEach(option => {
+    option.selected = wanted.has(option.value);
+  });
+}
+
+function setParam(params, key, value) {
+  if (value) params.set(key, value);
+  else params.delete(key);
+}
+
+function formatSalary(job) {
+  if (!job.salaryMin && !job.salaryMax) return '<span class="muted">-</span>';
+  const min = job.salaryMin || job.salaryMax;
+  const max = job.salaryMax || job.salaryMin;
+  const range = min === max ? String(min) : `${min}-${max}`;
+  return `${escapeHtml(range)} ${escapeHtml(job.salaryCurrency || '')}${job.salaryPeriod ? ` / ${escapeHtml(job.salaryPeriod)}` : ''}`;
+}
+
+function formatRelative(value) {
+  if (!value) return '<span class="muted">-</span>';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(value);
+  const days = Math.round((date.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  return formatter.format(days, 'day');
+}
+
+function badge(value) {
+  const clean = String(value || 'unknown');
+  return `<span class="badge badge-${escapeHtml(clean)}">${escapeHtml(clean)}</span>`;
+}
+
+function portalLabel(portal) {
+  return { ejobs: 'eJobs', bestjobs: 'BestJobs', hipo: 'HiPo', linkedin: 'LinkedIn' }[portal] || portal || '';
+}
+
+function renderCvPreview() {
+  document.getElementById('cvPreview').innerHTML = markdown(state.cvMarkdown || 'No CV loaded yet.');
+}
+
+function markdown(text) {
+  const escaped = escapeHtml(text);
+  return escaped
+    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.*)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/^(?!<[huol])/gm, '<p>')
+    .replace(/\n/g, '<br>');
 }
 
 function value(id) {

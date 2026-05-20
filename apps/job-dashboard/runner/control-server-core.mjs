@@ -1,5 +1,6 @@
 import { annotateModelAvailability, listConfiguredAiModels } from './ai-models.mjs';
 import { listGatewayModels, testAiGatewayModel, testCheapGatewayModels } from './ai-gateway.mjs';
+import { runState as defaultRunState } from './run-state.mjs';
 
 export function controlCorsHeaders() {
   return {
@@ -19,6 +20,7 @@ export function createControlHandler({
   testModel = testAiGatewayModel,
   testCheapModels = testCheapGatewayModels,
   fetchImpl = fetch,
+  runState = defaultRunState,
 } = {}) {
   return async function handleControlRequest({ method, url, body }) {
     const parsed = new URL(url || '/', 'http://127.0.0.1:48731');
@@ -57,6 +59,29 @@ export function createControlHandler({
     if (method === 'POST' && parsed.pathname === '/start') {
       manager.start((body || {}).runner);
       return response(202, manager.status()[(body || {}).runner]);
+    }
+
+    if (method === 'POST' && parsed.pathname === '/pause') {
+      const portal = String((body || {}).portal || '').trim().toLowerCase();
+      return response(200, portal ? runState.pausePortal(portal) : runState.pauseGlobal());
+    }
+
+    if (method === 'POST' && parsed.pathname === '/resume') {
+      const portal = String((body || {}).portal || '').trim().toLowerCase();
+      return response(200, portal ? runState.resumePortal(portal) : runState.resumeGlobal());
+    }
+
+    if (method === 'POST' && parsed.pathname === '/stop') {
+      const portal = String((body || {}).portal || '').trim().toLowerCase();
+      return response(200, portal ? runState.stopPortal(portal) : runState.stopGlobal());
+    }
+
+    if (method === 'GET' && parsed.pathname === '/progress') {
+      return response(200, runState.snapshot());
+    }
+
+    if (method === 'GET' && parsed.pathname === '/events') {
+      return response(200, runState.snapshot());
     }
 
     if (method === 'GET' && parsed.pathname === '/ai/models') {

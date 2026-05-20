@@ -16,10 +16,10 @@ import {
   shouldImportJob,
 } from './discovery-filter.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
+import { detectPortalSession, portalLoginUrl } from './portal-auth.mjs';
 import { buildPortalSearchPlan, defaultPortalRows, keywordsFromProfile, normalizePortalRows, supportedPortals } from './portal-config.mjs';
 import {
   dedupeJobs,
-  extractJobsFromPage,
   mergeJobDetail,
 } from './portal-extractor.mjs';
 import {
@@ -28,6 +28,7 @@ import {
   createPortalCounters,
   recordPortalImport,
 } from './portal-discovery-core.mjs';
+import { runState } from './run-state.mjs';
 
 const localEnv = envFromLocalConfig(loadLocalConfig());
 const env = { ...localEnv, ...process.env };
@@ -75,7 +76,7 @@ if (plan.length === 0) {
 }
 
 const rl = createInterface({ input, output });
-const context = await launchBrowserContext(env);
+const context = await launchBrowserContext(env, { stealth: portalRows.some(row => row.portal === 'hipo') });
 const page = context.pages()[0] || await context.newPage();
 const imported = [];
 const failed = [];
@@ -86,19 +87,38 @@ try {
   console.log('Playwright will open each candidate detail page and capture the full description before import when the portal exposes it.');
   console.log('You can log in, solve 2FA, or accept cookies in the visible browser when prompted.');
 
-  for (const item of plan) {
+  runState.reset();
+  const queue = [...plan];
+  while (queue.length > 0) {
+    const item = queue.shift();
     if (imported.length >= budgets.totalMax || allPortalBudgetsReached(portalCounts, budgets)) break;
+    if (runState.isCancelled(item.portal)) {
+      runState.setStatus(item.portal, 'done');
+      continue;
+    }
+    if (runState.isPaused(item.portal)) {
+      queue.push(item);
+      await delay(250);
+      continue;
+    }
     if (!canImportForPortal({ portal: item.portal, importedTotal: imported.length, counters: portalCounts, budgets })) {
       console.log(`\nSkipping ${item.portal}: per-portal budget reached.`);
+      runState.setStatus(item.portal, 'done');
       continue;
     }
     console.log(`\nOpening ${item.portal}: ${item.keyword}`);
+    runState.setStatus(item.portal, 'running');
+    runState.setLastUrl(item.portal, item.url);
     try {
+      const extractor = await loadExtractor(item.portal);
       await page.goto(item.url, { waitUntil: 'domcontentloaded', timeout: 90000 });
       await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      const auth = await ensurePortalSession(page, item.portal, item.url, rl);
+      if (auth.reloaded) await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
       await settleSearchResults(page);
 
-      let jobs = dedupeJobs(await extractJobsFromPage(page, item));
+      let jobs = dedupeJobs(await extractor.extractListPage(page, item));
+      runState.incr(item.portal, 'discovered', jobs.length);
 
       // Only treat the page as needing a manual step when extraction found
       // nothing - a normal results page has a "log in" link too. Never block on
@@ -107,7 +127,7 @@ try {
       if (jobs.length === 0 && await needsHumanIntervention(page)) {
         if (input.isTTY) {
           await rl.question(`Manual step needed on ${item.portal}. Log in / solve CAPTCHA in the browser, then press Enter here to continue.`);
-          jobs = dedupeJobs(await extractJobsFromPage(page, item));
+          jobs = dedupeJobs(await extractor.extractListPage(page, item));
         } else {
           console.log(`  ! ${item.portal} appears to need a manual login. Log into it in the open browser window, then run discovery again.`);
         }
@@ -119,7 +139,15 @@ try {
         if (!canImportForPortal({ portal: job.portal, importedTotal: imported.length, counters: portalCounts, budgets })) break;
 
         const enriched = await enrichJobWithDetail(page, job);
+        if (enriched.authRequired) {
+          incrementStat(portalStats, job.portal, 'authRequired');
+          runState.incr(job.portal, 'errors');
+          runState.setLastError(job.portal, enriched.authReason || 'Login required');
+          console.log(`  ! login required: ${job.company || 'Unknown'} | ${job.title}`);
+          continue;
+        }
         const decision = shouldImportJob(enriched, matchContext);
+        runState.incr(job.portal, 'matched');
         if (!decision.import) {
           incrementStat(portalStats, job.portal, decision.reason === 'location' ? 'skippedLocation' : 'skippedRelevance');
           console.log(`  - skipped ${decision.reason}: ${job.company || 'Unknown'} | ${job.title}`);
@@ -129,6 +157,7 @@ try {
         const created = await client.createJob(enriched);
         imported.push(created);
         recordPortalImport(portalCounts, job.portal);
+        runState.incr(job.portal, 'imported');
         incrementStat(portalStats, job.portal, 'imported');
         incrementStat(portalStats, job.portal, enriched.source?.includes(':detail') ? 'detailCaptured' : 'partialDetail');
         console.log(`  + ${portalCounts[job.portal]}/${budgets.remainingByPortal[job.portal]} ${created.fit?.score ?? created.fitScore ?? 0}% ${job.company || 'Unknown'} | ${job.title}`);
@@ -136,6 +165,9 @@ try {
     } catch (error) {
       failed.push({ ...item, error: error.message });
       incrementStat(portalStats, item.portal, 'failedSearches');
+      runState.incr(item.portal, 'errors');
+      runState.setLastError(item.portal, error.message);
+      runState.setStatus(item.portal, 'error');
       console.log(`  ! ${item.portal} failed: ${error.message}`);
     }
   }
@@ -145,7 +177,7 @@ try {
   console.log(`Imported/updated jobs: ${imported.length}`);
   console.log('Per-portal discovery counts:');
   for (const [portal, stats] of Object.entries(portalStats)) {
-    console.log(`  - ${portal}: imported=${stats.imported}, detail=${stats.detailCaptured}, partial=${stats.partialDetail}, skipped_location=${stats.skippedLocation}, skipped_relevance=${stats.skippedRelevance}, failed_searches=${stats.failedSearches}`);
+    console.log(`  - ${portal}: imported=${stats.imported}, detail=${stats.detailCaptured}, partial=${stats.partialDetail}, skipped_location=${stats.skippedLocation}, skipped_relevance=${stats.skippedRelevance}, auth_required=${stats.authRequired}, failed_searches=${stats.failedSearches}`);
   }
   if (failed.length > 0) {
     console.log(`Failed searches: ${failed.length}`);
@@ -159,6 +191,47 @@ async function needsHumanIntervention(page) {
   return /captcha|verify you are human|two-factor|2fa|sign in|log in|intra in cont|autentificare/i.test(text);
 }
 
+async function ensurePortalSession(page, portal, returnUrl, rl) {
+  const session = await readPortalSession(page, portal);
+  if (!session.needsLogin) {
+    if (session.authenticated) console.log(`  auth ok: ${portal}`);
+    return { ...session, reloaded: false };
+  }
+
+  const loginUrl = portalLoginUrl(portal);
+  const message = `${portal} needs login (${session.reason}).`;
+  runState.setLastError(portal, message);
+
+  if (!input.isTTY || !loginUrl) {
+    throw new Error(`${message} Open the Login Browser from the dashboard, finish signing into ${portal}, then run discovery again.`);
+  }
+
+  console.log(`  ! ${message} Opening the saved-profile login page now.`);
+  await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 90000 }).catch(() => {});
+  await rl.question(`Finish signing into ${portal} in the browser, then press Enter here to continue.`);
+
+  const afterLogin = await readPortalSession(page, portal);
+  if (afterLogin.needsLogin) {
+    throw new Error(`${portal} still appears logged out (${afterLogin.reason}).`);
+  }
+
+  await page.goto(returnUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  return { ...afterLogin, reloaded: true };
+}
+
+async function readPortalSession(page, portal) {
+  const [title, text] = await Promise.all([
+    page.title().catch(() => ''),
+    page.locator('body').innerText({ timeout: 5000 }).catch(() => ''),
+  ]);
+  return detectPortalSession({
+    portal,
+    url: page.url(),
+    title,
+    text,
+  });
+}
+
 async function settleSearchResults(page) {
   for (let i = 0; i < 4; i += 1) {
     await page.mouse.wheel(0, 1800).catch(() => {});
@@ -170,12 +243,35 @@ async function enrichJobWithDetail(page, job) {
   try {
     await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    const auth = await readPortalSession(page, job.portal);
+    if (auth.needsLogin) {
+      return {
+        ...job,
+        authRequired: true,
+        authReason: `${job.portal} detail page needs login (${auth.reason})`,
+      };
+    }
+    const extractor = await loadExtractor(job.portal);
+    const detail = await extractor.extractDetail(page);
     const detailText = await page.locator('body').innerText({ timeout: 8000 }).catch(() => '');
     const merged = mergeJobDetail(job, detailText);
-    return merged === job ? markPartialDescription(job) : merged;
+    const enriched = {
+      ...(merged === job ? markPartialDescription(job) : merged),
+      ...detail,
+      description: detail.description || merged.description || job.description || '',
+    };
+    return enriched.description ? enriched : markPartialDescription(enriched);
   } catch {
     return markPartialDescription(job);
   }
+}
+
+async function loadExtractor(portal) {
+  return import(`./extractors/${portal}.mjs`);
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function readOptionalFile(filePath) {
@@ -193,6 +289,7 @@ function createPortalStats(portals) {
     partialDetail: 0,
     skippedLocation: 0,
     skippedRelevance: 0,
+    authRequired: 0,
     failedSearches: 0,
   }]));
 }

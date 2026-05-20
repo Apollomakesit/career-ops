@@ -39,6 +39,25 @@
           <h2>Applications</h2>
           <button id="newJobButton" class="secondary-button">Add Job</button>
         </div>
+        <div class="runner-control-panel">
+          <div class="global-controls">
+            <button class="primary-button" data-start-runner="discover">Start All</button>
+            <button class="secondary-button" data-runner-action="pause">Pause All</button>
+            <button class="secondary-button" data-runner-action="resume">Resume All</button>
+            <button class="secondary-button danger" data-runner-action="stop">Stop All</button>
+          </div>
+          <div id="portalProgressCards" class="portal-progress-grid"></div>
+        </div>
+        <div class="filter-bar">
+          <label>Work model<select id="filterWorkModel" multiple size="3"><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">Onsite</option></select></label>
+          <label>Portal<select id="filterPortal" multiple size="4"><option value="ejobs">eJobs</option><option value="bestjobs">BestJobs</option><option value="hipo">HiPo</option><option value="linkedin">LinkedIn</option></select></label>
+          <label>Min salary<input id="filterMinSalary" type="number" min="0"></label>
+          <label>Max salary<input id="filterMaxSalary" type="number" min="0"></label>
+          <label>Currency<select id="filterCurrency"><option value="">Any</option><option value="EUR">EUR</option><option value="RON">RON</option><option value="USD">USD</option></select></label>
+          <label>Posted<select id="filterPostedWithin"><option value="">Any</option><option value="1">1d</option><option value="3">3d</option><option value="7">7d</option><option value="30">30d</option></select></label>
+          <label>Min CV match<input id="filterMinMatch" type="range" min="0" max="100" value="0"></label>
+          <label class="wide">Search<input id="filterSearch" placeholder="Title or description"></label>
+        </div>
         <div id="jobsTable" class="table"></div>
       </section>
 
@@ -120,11 +139,18 @@
       <section id="cv" class="view">
         <div class="section-head">
           <h2>CV</h2>
-          <span class="muted">Canonical source: cv.md</span>
+          <div class="button-row">
+            <button id="saveCvButton" class="primary-button">Save CV</button>
+            <button id="rescoreCvButton" class="secondary-button">Re-score all jobs</button>
+          </div>
         </div>
-        <article class="item cv-panel">
-          <pre id="cvMarkdown" class="cv-markdown"><code>Loading CV...</code></pre>
-        </article>
+        <div class="cv-editor-grid">
+          <label class="cv-editor-label">cv.md<textarea id="cvEditor" class="cv-editor" spellcheck="false"></textarea></label>
+          <article class="item cv-panel">
+            <h3>Preview</h3>
+            <div id="cvPreview" class="markdown-preview">Loading CV...</div>
+          </article>
+        </div>
       </section>
 
       <section id="profile" class="view">

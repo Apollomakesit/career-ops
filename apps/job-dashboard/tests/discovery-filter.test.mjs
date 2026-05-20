@@ -120,6 +120,78 @@ test('rejects language-heavy customer support without technical ownership', () =
   assert.equal(noisyCustomerCare.import, false);
 });
 
+test('rejects sales and HORECA developer false positives from broad portal searches', () => {
+  const context = buildLocalMatchContext({
+    profile: {
+      targetRoles: ['Full Stack Developer', 'Python Developer'],
+      skills: ['Python', 'TypeScript', 'React', 'PostgreSQL'],
+    },
+  });
+
+  for (const job of [
+    {
+      title: 'Business Developer HORECA - Brasov',
+      company: 'Coca-Cola HBC Romania',
+      location: 'Bucharest hybrid',
+      sourceQuery: 'Full Stack Developer',
+      description: 'Develop the HORECA sales channel, visit clients, negotiate listings, and grow revenue.',
+    },
+    {
+      title: 'Sales Developer',
+      location: 'Remote Romania',
+      sourceQuery: 'Backend Engineer',
+      description: 'Cold outreach, lead qualification, customer acquisition, and pipeline growth.',
+    },
+    {
+      title: 'Business Development Representative',
+      location: 'Bucharest',
+      sourceQuery: 'Python Developer',
+      description: 'Prospecting, CRM updates, sales targets, and booking meetings for account executives.',
+    },
+  ]) {
+    const decision = shouldImportJob(job, context);
+    assert.equal(decision.import, false, job.title);
+    assert.equal(decision.reason, 'relevance', job.title);
+  }
+});
+
+test('does not let the search keyword alone make an unrelated job relevant', () => {
+  const context = buildLocalMatchContext({
+    profile: {
+      targetRoles: ['Full Stack Developer'],
+      skills: ['React', 'TypeScript'],
+    },
+  });
+
+  const decision = shouldImportJob({
+    title: 'Office Manager',
+    location: 'Bucharest',
+    sourceQuery: 'Full Stack Developer',
+    description: 'Coordinate office suppliers, invoices, reception, and facilities.',
+  }, context);
+
+  assert.equal(decision.import, false);
+  assert.equal(decision.reason, 'relevance');
+});
+
+test('keeps real software developer jobs from the same broad searches', () => {
+  const context = buildLocalMatchContext({
+    profile: {
+      targetRoles: ['Full Stack Developer', 'Python Developer'],
+      skills: ['Python', 'TypeScript', 'React', 'PostgreSQL'],
+    },
+  });
+
+  const decision = shouldImportJob({
+    title: 'Software Developer - Python',
+    location: 'Bucharest hybrid',
+    sourceQuery: 'Full Stack Developer',
+    description: 'Build Python APIs with PostgreSQL and React dashboards.',
+  }, context);
+
+  assert.equal(decision.import, true);
+});
+
 test('marks partial descriptions when detail pages cannot be read', () => {
   const marked = markPartialDescription({
     description: 'Application Support Engineer\nExampleSoft\nRemote',

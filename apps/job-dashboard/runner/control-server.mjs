@@ -7,6 +7,7 @@ import { createRunnerClient } from './api-client.mjs';
 import { syncCloudRunner } from './cloud-sync.mjs';
 import { controlCorsHeaders, createControlHandler } from './control-server-core.mjs';
 import { createRunnerManager } from './run-manager.mjs';
+import { runState } from './run-state.mjs';
 import {
   envFromLocalConfig,
   loadLocalConfig,
@@ -37,6 +38,10 @@ const server = createServer(async (req, res) => {
 
   try {
     const parsed = new URL(req.url || '/', `http://${host}:${port}`);
+    if (req.method === 'GET' && parsed.pathname === '/events') {
+      writeSse(res);
+      return;
+    }
     if (req.method === 'POST' && parsed.pathname === '/cloud-sync') {
       await syncWithDashboard();
       writeJson(res, 200, { ok: true });
@@ -83,6 +88,26 @@ async function readJson(req) {
 function writeJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+function writeSse(res) {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'keep-alive',
+  });
+  const send = event => {
+    res.write(`event: progress\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  send(runState.snapshot());
+  const timer = setInterval(() => send(runState.snapshot()), 1000);
+  reqClose(res, () => clearInterval(timer));
+}
+
+function reqClose(res, fn) {
+  res.on('close', fn);
+  res.on('error', fn);
 }
 
 async function syncWithDashboard() {

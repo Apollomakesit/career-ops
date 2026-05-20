@@ -64,6 +64,28 @@ const strongDomainTerms = [
   'support automation',
 ];
 
+const negativeRolePatterns = [
+  /\bbusiness developer\b/,
+  /\bbusiness development\b/,
+  /\bsales developer\b/,
+  /\bsales representative\b/,
+  /\bsales consultant\b/,
+  /\baccount developer\b/,
+  /\baccount manager\b/,
+  /\bkey account\b/,
+  /\bbrand ambassador\b/,
+  /\bdoor to door\b/,
+  /\bfield sales\b/,
+  /\bhoreca\b/,
+  /\bretail sales\b/,
+  /\bcold outreach\b/,
+  /\bcold calling\b/,
+  /\bprospecting\b/,
+  /\blead qualification\b/,
+  /\bcasino\b/,
+  /\bbetting\b/,
+];
+
 export function buildDiscoveryBudgets({
   totalMax = 1000,
   portals = [],
@@ -104,12 +126,11 @@ export function shouldImportJob(job = {}, context = buildLocalMatchContext()) {
     job.company,
     job.location,
     job.description,
-    job.sourceQuery,
   ].join(' '));
   const matchedTerms = (context.terms || []).filter(term => text.includes(term));
   const hasStrongMatch = strongDomainTerms.some(term => text.includes(term));
   const hasRoleMatch = /application support|technical support|support engineer|product support|mdm|mobility|fastapi|full stack|backend|automation/i.test(text);
-  const hasNegativeRole = /door to door|field sales|sales representative|call center only|casino|betting/i.test(text);
+  const hasNegativeRole = negativeRolePatterns.some(pattern => pattern.test(text));
   const genericCustomerSupportTitle = /\b(customer support|customer care|client support)\b/.test(title)
     && !/\b(technical|application|product|it|software|mdm|engineer)\b/.test(title);
 

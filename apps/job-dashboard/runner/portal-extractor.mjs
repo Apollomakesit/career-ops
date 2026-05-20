@@ -78,6 +78,11 @@ export async function extractJobsFromPage(page, { portal, sourceUrl, keyword }) 
   }));
 }
 
+export async function extractDetailForPortal(page, portal) {
+  const extractor = await import(`./extractors/${portal}.mjs`);
+  return extractor.extractDetail(page);
+}
+
 export function normalizeExtractedLinks({ portal, sourceUrl, links = [], keyword = '' }) {
   return links
     .map(link => normalizeLink({ portal, sourceUrl, link, keyword }))

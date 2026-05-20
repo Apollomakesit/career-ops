@@ -25,14 +25,15 @@ export function describeBrowserProfile(env = {}) {
   return `Playwright Chromium profile at ${userDataDir}`;
 }
 
-export async function launchBrowserContext(env = {}) {
+export async function launchBrowserContext(env = {}, { stealth = false } = {}) {
   const { channel, profileDirectory, userDataDir } = resolveBrowserProfile(env);
   const options = { headless: false, viewport: null };
   if (channel) options.channel = channel;
   if (profileDirectory) options.args = [`--profile-directory=${profileDirectory}`];
+  const chromiumImpl = stealth ? await stealthChromium().catch(() => chromium) : chromium;
 
   try {
-    return await chromium.launchPersistentContext(userDataDir, options);
+    return await chromiumImpl.launchPersistentContext(userDataDir, options);
   } catch (error) {
     if (channel) {
       throw new Error(
@@ -42,4 +43,11 @@ export async function launchBrowserContext(env = {}) {
     }
     throw error;
   }
+}
+
+async function stealthChromium() {
+  const { chromium: chromiumStealth } = await import('playwright-extra');
+  const stealth = (await import('puppeteer-extra-plugin-stealth')).default;
+  chromiumStealth.use(stealth());
+  return chromiumStealth;
 }
