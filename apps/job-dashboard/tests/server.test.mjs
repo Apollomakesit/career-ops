@@ -39,6 +39,8 @@ test('serves dashboard HTML', async () => {
     assert.match(html, /runnerAiModelSelect/);
     assert.match(html, /testSelectedAiModelButton/);
     assert.match(html, /testCheapAiModelsButton/);
+    assert.match(html, /data-view="cv"/);
+    assert.match(html, /jobDetailsDialog/);
   } finally {
     await close(server);
   }

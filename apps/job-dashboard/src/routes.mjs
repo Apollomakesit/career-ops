@@ -1,8 +1,16 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { scoreJobFit } from './fit-score.mjs';
 import {
   generateAiFitScore as defaultGenerateAiFitScore,
   generateApplicationPackage as defaultGenerateApplicationPackage,
 } from './ai-generator.mjs';
+
+const srcDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(srcDir, '..', '..', '..');
+const defaultCvPath = path.join(repoRoot, 'cv.md');
 
 export async function dispatchApi(request, store, services = {}) {
   const url = new URL(request.url, 'http://dashboard.local');
@@ -10,6 +18,7 @@ export async function dispatchApi(request, store, services = {}) {
   const segments = url.pathname.split('/').filter(Boolean);
   const generateApplicationPackage = services.generateApplicationPackage || defaultGenerateApplicationPackage;
   const generateAiFitScore = services.generateAiFitScore || defaultGenerateAiFitScore;
+  const readCv = services.readCv || defaultReadCv;
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
@@ -18,6 +27,10 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'GET' && url.pathname === '/api/profile') {
       return json(200, await store.getProfile());
+    }
+
+    if (method === 'GET' && url.pathname === '/api/cv') {
+      return json(200, { markdown: await readCv() });
     }
 
     if (method === 'PUT' && url.pathname === '/api/profile') {
@@ -151,6 +164,10 @@ export async function dispatchApi(request, store, services = {}) {
   } catch (error) {
     return json(500, { error: 'server_error', message: error.message });
   }
+}
+
+async function defaultReadCv() {
+  return readFile(defaultCvPath, 'utf8');
 }
 
 export function createPostgresStore(pool) {

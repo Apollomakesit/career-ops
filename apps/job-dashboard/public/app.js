@@ -10,6 +10,7 @@ const state = {
   aiModels: [],
   aiGateway: {},
   accounts: [],
+  cvMarkdown: '',
 };
 
 let token = localStorage.getItem('careerOpsDashboardToken') || '';
@@ -27,6 +28,7 @@ document.querySelectorAll('.nav-button').forEach(button => {
 document.getElementById('refreshButton').addEventListener('click', loadAll);
 document.getElementById('newJobButton').addEventListener('click', () => document.getElementById('jobDialog').showModal());
 document.getElementById('createJobButton').addEventListener('click', createJob);
+document.getElementById('closeJobDetailsButton').addEventListener('click', () => document.getElementById('jobDetailsDialog').close());
 document.getElementById('saveProfileButton').addEventListener('click', saveProfile);
 document.getElementById('connectRunnerButton').addEventListener('click', () => loadRunnerStatus({ alertOnError: true }));
 document.getElementById('saveRunnerConfigButton').addEventListener('click', saveRunnerConfig);
@@ -47,19 +49,21 @@ await loadRunnerStatus({ alertOnError: false });
 setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
 
 async function loadAll() {
-  const [profile, portals, jobs, packagesList, events] = await Promise.all([
+  const [profile, portals, jobs, packagesList, events, cv] = await Promise.all([
     api('/api/profile'),
     api('/api/portals'),
     api('/api/jobs'),
     api('/api/packages'),
     api('/api/events'),
+    api('/api/cv').catch(() => ({ markdown: 'CV view is waiting for the dashboard API to reload. The canonical file is cv.md in the project root.' })),
   ]);
-  Object.assign(state, { profile, portals, jobs, packages: packagesList, events });
+  Object.assign(state, { profile, portals, jobs, packages: packagesList, events, cvMarkdown: cv.markdown || '' });
   renderJobs();
   renderProfile();
   renderPortals();
   renderPackages();
   renderEvents();
+  renderCv();
 }
 
 function renderJobs() {
@@ -68,10 +72,17 @@ function renderJobs() {
     <div class="row">
       <div class="score ${scoreClass(job.fitScore)}">${job.fitScore || 0}%</div>
       <div><strong>${escapeHtml(job.company || '')}</strong><br><span class="muted">${escapeHtml(job.portal || '')}</span></div>
-      <div>${escapeHtml(job.title || '')}<br><span class="muted">${escapeHtml(job.location || '')}</span></div>
-      <div>${escapeHtml(job.recommendation || 'review')}</div>
+      <div>
+        ${job.url ? `<a class="job-title-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">${escapeHtml(job.title || '')}</a>` : escapeHtml(job.title || '')}
+        <br><span class="muted">${escapeHtml(job.location || '')}</span>
+      </div>
+      <div>${escapeHtml(job.recommendation || 'review')}<br><span class="muted">${escapeHtml(job.fitCategory || '')}</span></div>
       <div>${escapeHtml(job.status || 'discovered')}</div>
-      <button class="secondary-button" data-generate-job="${job.id}">Generate AI Draft</button>
+      <div class="row-actions">
+        <button class="secondary-button" data-details-job="${job.id}">Details</button>
+        ${job.url ? `<a class="secondary-button action-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">Open</a>` : ''}
+        <button class="secondary-button" data-generate-job="${job.id}">Generate AI Draft</button>
+      </div>
     </div>
   `).join('');
 
@@ -84,6 +95,9 @@ function renderJobs() {
 
   target.querySelectorAll('[data-generate-job]').forEach(button => {
     button.addEventListener('click', () => generatePackage(button.dataset.generateJob, button));
+  });
+  target.querySelectorAll('[data-details-job]').forEach(button => {
+    button.addEventListener('click', () => showJobDetails(button.dataset.detailsJob));
   });
 }
 
@@ -161,6 +175,54 @@ function renderEvents() {
       <p>${escapeHtml(event.createdAt || '')}</p>
     </div>
   `).join('') || '<div class="item"><h3>No activity yet</h3><p>Dashboard events will appear here.</p></div>';
+}
+
+function renderCv() {
+  document.getElementById('cvMarkdown').innerHTML = `<code>${escapeHtml(state.cvMarkdown || 'No CV loaded yet.')}</code>`;
+}
+
+function showJobDetails(jobId) {
+  const job = state.jobs.find(item => item.id === jobId);
+  if (!job) return;
+  document.getElementById('jobDetailsTitle').textContent = job.title || 'Job details';
+  document.getElementById('jobDetailsMeta').textContent = [job.company, job.portal, job.location].filter(Boolean).join(' · ');
+  document.getElementById('jobDetailsBody').innerHTML = `
+    <section class="details-grid">
+      <article>
+        <h3>Match</h3>
+        <div class="score-large ${scoreClass(job.fitScore)}">${job.fitScore || 0}%</div>
+        <p><strong>Recommendation:</strong> ${escapeHtml(job.recommendation || 'review')}</p>
+        <p><strong>Category:</strong> ${escapeHtml(job.fitCategory || 'unclassified')}</p>
+      </article>
+      <article>
+        <h3>Job Link</h3>
+        ${job.url ? `<a class="primary-button action-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">Open original posting</a>` : '<p class="muted">No job URL captured.</p>'}
+      </article>
+    </section>
+    <section>
+      <h3>Why This Score</h3>
+      ${renderList(job.fitReasons)}
+    </section>
+    <section class="details-grid">
+      <article>
+        <h3>Matched CV Skills</h3>
+        ${renderTags(job.matchedSkills)}
+      </article>
+      <article>
+        <h3>Missing Or Unclear</h3>
+        ${renderTags(job.missingSkills)}
+      </article>
+      <article>
+        <h3>Risk Flags</h3>
+        ${renderTags(job.riskFlags)}
+      </article>
+    </section>
+    <section>
+      <h3>Captured Description</h3>
+      <pre class="description-panel"><code>${escapeHtml(job.description || 'No description captured yet.')}</code></pre>
+    </section>
+  `;
+  document.getElementById('jobDetailsDialog').showModal();
 }
 
 async function createJob(event) {
@@ -480,6 +542,18 @@ function renderKeyValues(value) {
   return `<dl class="kv-list">${entries.map(([key, item]) => `
     <div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd></div>
   `).join('')}</dl>`;
+}
+
+function renderList(items = []) {
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (values.length === 0) return '<p class="muted">No score reasons recorded yet.</p>';
+  return `<ul class="detail-list">${values.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+}
+
+function renderTags(items = []) {
+  const values = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (values.length === 0) return '<p class="muted">None recorded.</p>';
+  return `<div class="tag-list">${values.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('')}</div>`;
 }
 
 function value(id) {

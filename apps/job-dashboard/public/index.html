@@ -19,6 +19,7 @@
       <button class="nav-button" data-view="review">Review</button>
       <button class="nav-button" data-view="operations">Operations</button>
       <button class="nav-button" data-view="accounts">AI Accounts</button>
+      <button class="nav-button" data-view="cv">CV</button>
       <button class="nav-button" data-view="profile">Profile</button>
       <button class="nav-button" data-view="portals">Portals</button>
       <button class="nav-button" data-view="activity">Activity</button>
@@ -116,6 +117,16 @@
         <div id="accountsList" class="stack"></div>
       </section>
 
+      <section id="cv" class="view">
+        <div class="section-head">
+          <h2>CV</h2>
+          <span class="muted">Canonical source: cv.md</span>
+        </div>
+        <article class="item cv-panel">
+          <pre id="cvMarkdown" class="cv-markdown"><code>Loading CV...</code></pre>
+        </article>
+      </section>
+
       <section id="profile" class="view">
         <div class="section-head">
           <h2>Profile</h2>
@@ -164,6 +175,19 @@
           <button id="createJobButton" value="default" class="primary-button">Create</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="jobDetailsDialog">
+      <div class="dialog-form details-dialog">
+        <div class="item-head">
+          <div>
+            <h2 id="jobDetailsTitle">Job details</h2>
+            <p id="jobDetailsMeta" class="muted"></p>
+          </div>
+          <button id="closeJobDetailsButton" class="secondary-button" type="button">Close</button>
+        </div>
+        <div id="jobDetailsBody" class="details-body"></div>
+      </div>
     </dialog>
 
     <script src="/app.js" type="module"></script>

@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  cleanJobDetailText,
   dedupeJobs,
+  mergeJobDetail,
   normalizeExtractedLinks,
 } from '../runner/portal-extractor.mjs';
 
@@ -101,4 +103,53 @@ test('filters HiPo registration links and extracts company from HiPo job URLs', 
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].company, 'CGS Nexus Romania');
   assert.equal(jobs[0].title, 'Technical Support with German - Brasov / Bucuresti Hybrid');
+});
+
+test('cleans detail page text while keeping responsibilities and requirements', () => {
+  const cleaned = cleanJobDetailText(`
+    Accept cookies
+    Careers
+    Login
+    Application Support Engineer
+    About the role
+    You will support enterprise customers and internal teams.
+    Responsibilities
+    Own ServiceNow incidents and troubleshoot MDM device issues.
+    Requirements
+    Experience with Workspace ONE, Android, iOS, and customer escalations.
+    Similar jobs
+    Set job alert
+  `);
+
+  assert.match(cleaned, /Responsibilities/);
+  assert.match(cleaned, /Requirements/);
+  assert.match(cleaned, /Workspace ONE/);
+  assert.doesNotMatch(cleaned, /Accept cookies/);
+  assert.doesNotMatch(cleaned, /Set job alert/);
+});
+
+test('merges full detail text over listing snippets', () => {
+  const merged = mergeJobDetail(
+    {
+      title: 'Application Support Engineer',
+      description: 'Application Support Engineer\nExampleSoft\nRemote',
+      source: 'portal-discovery:ejobs',
+    },
+    `
+    Application Support Engineer
+    About the role
+    Support customers across ServiceNow, MDM, Android, and iOS.
+    Responsibilities
+    Investigate incidents, document fixes, and coordinate escalations.
+    Requirements
+    Workspace ONE, Ivanti, Jira, and Python automation experience.
+    Benefits
+    Remote-first setup.
+    `,
+  );
+
+  assert.match(merged.description, /Responsibilities/);
+  assert.match(merged.description, /Requirements/);
+  assert.match(merged.description, /Benefits/);
+  assert.equal(merged.source, 'portal-discovery:ejobs:detail');
 });

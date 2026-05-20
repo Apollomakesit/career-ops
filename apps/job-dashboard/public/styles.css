@@ -146,6 +146,32 @@ h2 {
   background: #ffffff;
 }
 
+.action-link,
+.job-title-link {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.job-title-link:hover,
+.action-link:hover {
+  text-decoration: underline;
+}
+
+.action-link.secondary-button,
+.action-link.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .table,
 .stack,
 .form-grid,
@@ -162,7 +188,7 @@ h2 {
 
 .row {
   display: grid;
-  grid-template-columns: 90px 1.3fr 1.6fr 120px 130px 170px;
+  grid-template-columns: 90px 1.25fr 1.55fr 120px 120px 260px;
   gap: 12px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
@@ -182,6 +208,12 @@ h2 {
 
 .score {
   font-weight: 800;
+}
+
+.score-large {
+  font-size: 32px;
+  font-weight: 800;
+  margin-bottom: 8px;
 }
 
 .score.good {
@@ -417,10 +449,60 @@ dialog {
   padding: 0;
 }
 
+#jobDetailsDialog {
+  width: min(980px, calc(100vw - 28px));
+}
+
 .dialog-form {
   display: grid;
   gap: 12px;
   padding: 18px;
+}
+
+.details-dialog {
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.details-body {
+  display: grid;
+  gap: 16px;
+}
+
+.details-body h3 {
+  margin: 0 0 8px;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.details-grid article,
+.details-body section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.detail-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.description-panel,
+.cv-markdown {
+  max-height: 520px;
+  overflow: auto;
 }
 
 .dialog-actions {
@@ -471,7 +553,8 @@ dialog {
   .command-grid,
   .ops-grid,
   .runner-cards,
-  .compact {
+  .compact,
+  .details-grid {
     grid-template-columns: 1fr;
   }
 

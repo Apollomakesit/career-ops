@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildPortalSearchPlan,
   defaultPortalRows,
+  keywordsFromProfile,
   keywordSlug,
   normalizePortalRows,
   supportedPortals,
@@ -38,7 +39,7 @@ test('provides default editable Romanian portal rows', () => {
   assert.ok(defaultPortalRows.every(portal => portal.fieldHints.discovery.enabled === true));
 });
 
-test('builds searches from dashboard portal rows and skips disabled portals', () => {
+test('builds searches from dashboard portal rows, merges fallback keywords, and skips disabled portals', () => {
   const portals = normalizePortalRows([
     {
       portal: 'ejobs',
@@ -61,7 +62,19 @@ test('builds searches from dashboard portal rows and skips disabled portals', ()
   ]);
 
   const plan = buildPortalSearchPlan({ portals, keywords: ['Fallback'], perPortalLimit: 4 });
-  assert.equal(plan.length, 2);
+  assert.equal(plan.length, 3);
   assert.ok(plan.every(item => item.portal === 'ejobs'));
   assert.ok(plan.some(item => item.keyword === 'MDM'));
+  assert.ok(plan.some(item => item.keyword === 'Fallback'));
+});
+
+test('derives discovery keywords from target roles and profile skills', () => {
+  const keywords = keywordsFromProfile({
+    targetRoles: ['Application Support Engineer'],
+    skills: ['Workspace ONE', 'ServiceNow', 'FastAPI'],
+  });
+
+  assert.ok(keywords.includes('Application Support Engineer'));
+  assert.ok(keywords.includes('Workspace ONE'));
+  assert.ok(keywords.includes('ServiceNow'));
 });

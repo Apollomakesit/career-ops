@@ -97,6 +97,37 @@ export function dedupeJobs(jobs) {
   return [...seen.values()];
 }
 
+export function cleanJobDetailText(text, { maxLength = 12000 } = {}) {
+  const lines = splitLines(text)
+    .filter(line => !isDetailNoise(line))
+    .filter(line => line.length <= 900);
+  const deduped = [];
+  const seen = new Set();
+  for (const line of lines) {
+    const key = line.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(line);
+  }
+  return deduped.join('\n').slice(0, maxLength).trim();
+}
+
+export function mergeJobDetail(job = {}, detailText = '') {
+  const cleaned = cleanJobDetailText(detailText);
+  const current = cleanText(job.description || '');
+  if (cleaned.length < Math.max(240, current.length)) {
+    return job;
+  }
+  const source = String(job.source || '').includes(':detail')
+    ? job.source
+    : `${job.source || 'portal-discovery'}:detail`;
+  return {
+    ...job,
+    description: cleaned,
+    source,
+  };
+}
+
 function recordScore(job) {
   return (job.company ? 2 : 0) + (job.location ? 1 : 0) + (job.title ? 1 : 0);
 }
@@ -203,6 +234,19 @@ function firstMeaningfulLine(lines) {
 function isNavigationText(text) {
   const lower = String(text).toLowerCase().trim();
   return !lower || navigationWords.some(word => lower === word || (lower.includes(word) && lower.length <= word.length + 8));
+}
+
+function isDetailNoise(line) {
+  const value = String(line || '').trim();
+  const lower = value.toLowerCase();
+  if (!value) return true;
+  if (value.length <= 2) return true;
+  if (/^(accept|reject|manage)?\s*(all\s*)?(cookies|cookie settings)$/i.test(value)) return true;
+  if (/^(login|log in|sign in|register|create account|careers|home|menu|search|back|next)$/i.test(value)) return true;
+  if (/^(apply|aplica|aplica rapid|save job|set job alert|similar jobs|recommended jobs)$/i.test(value)) return true;
+  if (/privacy policy|terms of use|all rights reserved|cookie policy|newsletter/i.test(value)) return true;
+  if (navigationWords.some(word => lower === word)) return true;
+  return false;
 }
 
 function looksLikeLocation(line) {

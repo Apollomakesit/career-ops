@@ -111,6 +111,13 @@ automation profile when Chrome is installed, so your portal sessions survive
 between runs without touching your personal Chrome profile. Log into
 LinkedIn/eJobs/BestJobs/HiPo the first time if prompted.
 
+Discovery is Playwright-first and AI-free. By default it targets about 1000
+locally detected jobs total, with a fair budget of about 250 imported matches
+per portal across eJobs, BestJobs, HiPo, and LinkedIn. Before importing a job,
+Playwright opens the job detail page and tries to capture the full description,
+including responsibilities, requirements, qualifications, benefits, tech stack,
+and work model. AI is only used later when you run `AI Score Jobs`.
+
 Command-line equivalent:
 
 ```powershell

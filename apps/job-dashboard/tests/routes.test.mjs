@@ -118,6 +118,18 @@ test('updates profile', async () => {
   assert.equal(store.state.profile.fullName, 'Updated Name');
 });
 
+test('serves canonical CV markdown for dashboard viewing', async () => {
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/cv',
+  }, createStore(), {
+    readCv: async () => '# Ioan Stefan Vlaicu\n\n## Experience',
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.markdown, '# Ioan Stefan Vlaicu\n\n## Experience');
+});
+
 test('creates a job with fit scoring', async () => {
   const store = createStore();
   const response = await dispatchApi({

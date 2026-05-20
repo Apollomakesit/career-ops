@@ -100,6 +100,7 @@ export function keywordSlug(keyword, portal) {
 export function keywordsFromProfile(profile = {}) {
   return unique([
     ...(profile.targetRoles || []),
+    ...(profile.skills || []),
     'Technical Support',
     'Application Support',
     'MDM',
@@ -112,7 +113,7 @@ export function keywordsFromProfile(profile = {}) {
 
 function keywordsForPortal(row, fallbackKeywords) {
   const configured = row.fieldHints?.discovery?.keywords || [];
-  return unique(configured.length > 0 ? configured : fallbackKeywords);
+  return unique([...configured, ...fallbackKeywords]);
 }
 
 function unique(values) {
