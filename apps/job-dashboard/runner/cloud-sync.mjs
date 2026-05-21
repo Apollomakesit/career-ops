@@ -53,7 +53,7 @@ export async function syncCloudRunner({
   } else if (claimed?.runner === 'test-cheap-ai') {
     await runCheapAiTestCommand({ client, command: claimed, config, testCheapModels });
   } else if (claimed?.runner && !commandBindings.has(claimed.runner)) {
-    manager.start(claimed.runner);
+    manager.start(claimed.runner, claimed.payload || {});
     commandBindings.set(claimed.runner, claimed.id);
   }
 

@@ -19,14 +19,23 @@ export function createRunnerManager({
 } = {}) {
   const runs = new Map(Object.keys(commands).map(name => [name, createRunState(name)]));
 
-  function start(name) {
+  function start(name, options = {}) {
     if (!commands[name]) throw new Error(`Unknown runner: ${name}`);
     const current = runs.get(name);
-    if (current?.status === 'running') return current;
+    const nextKey = optionsKey(options);
+    if (current?.status === 'running') {
+      if (name === 'discover' && nextKey && current.optionsKey !== nextKey) {
+        stop(name);
+      } else {
+        return current;
+      }
+    }
 
     const run = createRunState(name);
     run.status = 'running';
     run.startedAt = now().toISOString();
+    run.options = normalizeStartOptions(options);
+    run.optionsKey = nextKey;
     run.logs.push(logEntry('system', `Starting ${name} runner...`, now));
 
     const child = spawnImpl(process.execPath, [commands[name]], {
@@ -34,6 +43,7 @@ export function createRunnerManager({
       env: {
         ...process.env,
         ...envProvider(),
+        ...envOverridesFor(name, options),
       },
       windowsHide: true,
     });
@@ -68,7 +78,26 @@ export function createRunnerManager({
     return publicRun(runs.get(name)).logs;
   }
 
-  return { start, status, logs };
+  function stop(name) {
+    const run = runs.get(name);
+    if (!run || run.status !== 'running' || !run.process) return null;
+    try {
+      run.process.kill();
+    } catch {
+      // Ignore — exit handler already cleaned up.
+    }
+    return publicRun(run);
+  }
+
+  function stopAll() {
+    const stopped = [];
+    for (const name of runs.keys()) {
+      if (stop(name)) stopped.push(name);
+    }
+    return stopped;
+  }
+
+  return { start, stop, stopAll, status, logs };
 }
 
 function createRunState(name) {
@@ -80,7 +109,36 @@ function createRunState(name) {
     startedAt: null,
     finishedAt: null,
     logs: [],
+    options: {},
+    optionsKey: '',
   };
+}
+
+function envOverridesFor(name, options = {}) {
+  if (name !== 'discover') return {};
+  const normalized = normalizeStartOptions(options);
+  const env = {
+    PORTAL_DISCOVERY_PORTALS: normalized.portal,
+    PORTAL_DISCOVERY_MODE: normalized.mode,
+    PORTAL_DISCOVERY_SMOKE_URL: '',
+    PORTAL_DISCOVERY_SMOKE_ONLY: '',
+  };
+  return env;
+}
+
+function normalizeStartOptions(options = {}) {
+  return {
+    portal: String(options.portal || '').trim().toLowerCase(),
+    mode: String(options.mode || '').trim().toLowerCase(),
+  };
+}
+
+function optionsKey(options = {}) {
+  const normalized = normalizeStartOptions(options);
+  return Object.entries(normalized)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}:${value}`)
+    .join('|');
 }
 
 function appendLog(run, stream, chunk, now, maxLogs) {

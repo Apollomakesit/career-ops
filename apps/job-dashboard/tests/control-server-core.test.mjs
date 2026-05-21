@@ -130,10 +130,18 @@ test('control handler reports a missing management key for account actions', asy
   assert.equal(response.body.error, 'management_key_missing');
 });
 
-test('control CORS headers allow HTTPS dashboard calls into localhost', () => {
-  const headers = controlCorsHeaders();
+test('control CORS headers allow the local dashboard origin without wildcard access', () => {
+  const headers = controlCorsHeaders('http://127.0.0.1:3000');
 
-  assert.equal(headers['access-control-allow-origin'], '*');
+  assert.equal(headers['access-control-allow-origin'], 'http://127.0.0.1:3000');
+  assert.equal(headers['access-control-allow-private-network'], 'true');
+  assert.equal(headers.vary, 'origin');
+});
+
+test('control CORS headers reject unrelated browser origins', () => {
+  const headers = controlCorsHeaders('https://example.invalid');
+
+  assert.equal(headers['access-control-allow-origin'], undefined);
   assert.equal(headers['access-control-allow-private-network'], 'true');
 });
 
@@ -157,4 +165,42 @@ test('control handler exposes pause, resume, stop, and progress state', async ()
 
   const stopped = await handler({ method: 'POST', url: '/stop', body: {} });
   assert.equal(stopped.body.global.cancelled, true);
+});
+
+test('run state tracks rescan queued and processed counts', () => {
+  const runState = createRunState({ persist: false });
+
+  runState.setQueued('linkedin', 3);
+  runState.incr('linkedin', 'processed');
+
+  const snapshot = runState.snapshot();
+  assert.equal(snapshot.perPortal.linkedin.queued, 3);
+  assert.equal(snapshot.perPortal.linkedin.processed, 1);
+});
+
+test('control handler starts portal-specific discovery and clears stale stop state', async () => {
+  const runState = createRunState({ persist: false });
+  runState.stopPortal('linkedin');
+  const starts = [];
+  const handler = createControlHandler({
+    loadConfig: () => ({}),
+    runState,
+    manager: {
+      status: () => ({ discover: { status: 'running' } }),
+      start(runner, options) {
+        starts.push({ runner, options });
+        return { status: 'running' };
+      },
+    },
+  });
+
+  const response = await handler({
+    method: 'POST',
+    url: '/start',
+    body: { runner: 'discover', portal: 'linkedin', mode: 'missing' },
+  });
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(starts[0], { runner: 'discover', options: { portal: 'linkedin', mode: 'missing' } });
+  assert.equal(runState.snapshot().perPortal.linkedin.cancelled, false);
 });

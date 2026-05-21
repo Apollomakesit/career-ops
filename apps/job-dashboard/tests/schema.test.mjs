@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SCHEMA_SQL, requiredTables } from '../src/schema.mjs';
+import { up as migrateUniqueApplicationPackageJob } from '../src/migrations/0003-unique-application-package-job.mjs';
 
 test('schema declares every dashboard table idempotently', () => {
   for (const table of requiredTables) {
@@ -41,4 +42,31 @@ test('schema seeds the Romanian portals used by the discovery runner', () => {
 
 test('schema tracks applied migrations', () => {
   assert.match(SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS migrations_applied/i);
+});
+
+test('application package uniqueness migration uses dialect-specific index SQL', async () => {
+  const postgresQueries = [];
+  await migrateUniqueApplicationPackageJob({
+    dialect: 'postgres',
+    async query(sql) {
+      postgresQueries.push(sql);
+      return { rows: [] };
+    },
+  });
+
+  const createIndexSql = postgresQueries.find(sql => /CREATE UNIQUE INDEX/i.test(sql));
+  assert.ok(createIndexSql);
+  assert.doesNotMatch(createIndexSql, /IF NOT EXISTS/i);
+  assert.ok(postgresQueries.some(sql => /DROP INDEX IF EXISTS application_packages_job_id_unique/i.test(sql)));
+
+  const sqliteQueries = [];
+  await migrateUniqueApplicationPackageJob({
+    dialect: 'sqlite',
+    async query(sql) {
+      sqliteQueries.push(sql);
+      return { rows: [] };
+    },
+  });
+
+  assert.ok(sqliteQueries.some(sql => /CREATE UNIQUE INDEX IF NOT EXISTS application_packages_job_id_unique/i.test(sql)));
 });

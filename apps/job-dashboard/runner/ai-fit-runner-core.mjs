@@ -14,6 +14,8 @@ export async function scoreJobsWithAi({
   client,
   generateFitScore = generateAiFitScore,
   limit = Number(process.env.AI_FIT_LIMIT || 40),
+  cooldownMs = Number(process.env.AI_REQUEST_COOLDOWN_MS || 0),
+  wait = delay,
   onLog = () => {},
 } = {}) {
   const [profile, jobs] = await Promise.all([
@@ -27,7 +29,9 @@ export async function scoreJobsWithAi({
   let updated = 0;
   const failed = [];
 
-  for (const job of selected) {
+  for (let index = 0; index < selected.length; index += 1) {
+    const job = selected[index];
+    if (index > 0 && cooldownMs > 0) await wait(cooldownMs);
     try {
       onLog(`Scoring ${job.company || 'Unknown company'} - ${job.title || 'Unknown role'}.`);
       const fit = await generateFitScore({
@@ -49,6 +53,10 @@ export async function scoreJobsWithAi({
     updated,
     failed,
   };
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function jobToRulesFit(job = {}) {

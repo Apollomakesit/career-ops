@@ -2,13 +2,22 @@ import { annotateModelAvailability, listConfiguredAiModels } from './ai-models.m
 import { listGatewayModels, testAiGatewayModel, testCheapGatewayModels } from './ai-gateway.mjs';
 import { runState as defaultRunState } from './run-state.mjs';
 
-export function controlCorsHeaders() {
-  return {
-    'access-control-allow-origin': '*',
+const defaultDashboardOrigins = ['http://127.0.0.1:3000', 'http://localhost:3000'];
+
+export function controlCorsHeaders(origin = '', {
+  allowedOrigins = localDashboardOrigins(),
+} = {}) {
+  const headers = {
     'access-control-allow-methods': 'GET,POST,PUT,PATCH,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization',
     'access-control-allow-private-network': 'true',
+    vary: 'origin',
   };
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (normalizedOrigin && allowedOrigins.includes(normalizedOrigin)) {
+    headers['access-control-allow-origin'] = normalizedOrigin;
+  }
+  return headers;
 }
 
 export function createControlHandler({
@@ -57,8 +66,18 @@ export function createControlHandler({
     }
 
     if (method === 'POST' && parsed.pathname === '/start') {
-      manager.start((body || {}).runner);
-      return response(202, manager.status()[(body || {}).runner]);
+      const payload = body || {};
+      const runner = payload.runner;
+      const options = {
+        portal: String(payload.portal || '').trim().toLowerCase(),
+        mode: String(payload.mode || '').trim().toLowerCase(),
+      };
+      if (runner === 'discover') {
+        if (options.portal && typeof runState.resetPortal === 'function') runState.resetPortal(options.portal);
+        else if (typeof runState.reset === 'function') runState.reset();
+      }
+      manager.start(runner, options);
+      return response(202, manager.status()[runner]);
     }
 
     if (method === 'POST' && parsed.pathname === '/pause') {
@@ -73,7 +92,15 @@ export function createControlHandler({
 
     if (method === 'POST' && parsed.pathname === '/stop') {
       const portal = String((body || {}).portal || '').trim().toLowerCase();
-      return response(200, portal ? runState.stopPortal(portal) : runState.stopGlobal());
+      const stateResult = portal ? runState.stopPortal(portal) : runState.stopGlobal();
+      // Per-portal stop just flags the runner; a global stop also kills the
+      // child process so the user sees Stop All take effect immediately
+      // instead of waiting for the loop boundary to register the flag.
+      let killed = [];
+      if (!portal && manager && typeof manager.stopAll === 'function') {
+        killed = manager.stopAll();
+      }
+      return response(200, { ...stateResult, stopped: killed });
     }
 
     if (method === 'GET' && parsed.pathname === '/progress') {
@@ -227,6 +254,7 @@ function normalizeAccounts(payload = {}) {
       email: file.email || file.account || file.label || '',
       disabled: Boolean(file.disabled),
       failed: Number(file.failed || 0),
+      lastError: file.lastError || file.last_error || file.error || '',
     }))
     .filter(account => account.name);
 }
@@ -248,6 +276,24 @@ function normalizeAccountProvider(provider) {
 
 function response(status, body) {
   return { status, body };
+}
+
+function localDashboardOrigins() {
+  const configured = String(process.env.LOCAL_RUNNER_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(normalizeOrigin)
+    .filter(Boolean);
+  return [...new Set([...defaultDashboardOrigins, ...configured])];
+}
+
+function normalizeOrigin(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed).origin;
+  } catch {
+    return '';
+  }
 }
 
 function missingProxyKey() {

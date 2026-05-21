@@ -10,8 +10,8 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
       return request(`${root}/api/portals`, { token, fetchImpl });
     },
 
-    async fetchJobs() {
-      return request(`${root}/api/jobs`, { token, fetchImpl });
+    async fetchJobs(filters = {}) {
+      return request(`${root}/api/jobs${queryString(filters)}`, { token, fetchImpl });
     },
 
     async fetchPackages() {
@@ -110,6 +110,19 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
       });
     },
   };
+}
+
+function queryString(filters = {}) {
+  const params = new URLSearchParams();
+  if (filters.incomplete) params.set('incomplete', '1');
+  if (filters.limit != null) params.set('limit', String(filters.limit));
+  if (filters.portal) {
+    const portals = Array.isArray(filters.portal) ? filters.portal : [filters.portal];
+    const value = portals.map(item => String(item || '').trim()).filter(Boolean).join(',');
+    if (value) params.set('portal', value);
+  }
+  const text = params.toString();
+  return text ? `?${text}` : '';
 }
 
 async function request(url, { token, fetchImpl, options = {} }) {

@@ -31,6 +31,21 @@ test('recognizes a logged-in LinkedIn shell', () => {
   assert.equal(state.authenticated, true);
 });
 
+test('does not bounce a logged-in LinkedIn page that still shows Join now / sign in CTAs', () => {
+  // Real /jobs/search/ pages keep "Join now" and "Sign in to view" banners
+  // even for authenticated users. As long as nav items prove auth, treat
+  // the session as live.
+  const state = detectPortalSession({
+    portal: 'linkedin',
+    url: 'https://www.linkedin.com/jobs/search/?keywords=technical%20support',
+    title: 'Jobs | LinkedIn',
+    text: 'My Network Notifications Sign in to view your saved jobs Join now Premium',
+  });
+
+  assert.equal(state.needsLogin, false);
+  assert.equal(state.authenticated, true);
+});
+
 test('detects Romanian portal login screens without flagging ordinary search pages', () => {
   assert.equal(detectPortalSession({
     portal: 'ejobs',

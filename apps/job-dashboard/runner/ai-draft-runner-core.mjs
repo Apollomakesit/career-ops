@@ -18,6 +18,8 @@ export async function draftPackagesForJobs({
   generatePackage = generateApplicationPackage,
   minFitScore = Number(process.env.AI_DRAFT_MIN_FIT || 60),
   limit = Number(process.env.AI_DRAFT_LIMIT || 20),
+  cooldownMs = Number(process.env.AI_REQUEST_COOLDOWN_MS || 0),
+  wait = delay,
   onLog = () => {},
 } = {}) {
   const [profile, jobs, packages] = await Promise.all([
@@ -32,7 +34,9 @@ export async function draftPackagesForJobs({
   let created = 0;
   const failed = [];
 
-  for (const job of selected) {
+  for (let index = 0; index < selected.length; index += 1) {
+    const job = selected[index];
+    if (index > 0 && cooldownMs > 0) await wait(cooldownMs);
     try {
       onLog(`Drafting ${job.company || 'Unknown company'} - ${job.title || 'Unknown role'} (${job.fitScore || 0}%).`);
       const generated = await generatePackage({ profile, job });
@@ -50,4 +54,8 @@ export async function draftPackagesForJobs({
     created,
     failed,
   };
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

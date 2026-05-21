@@ -52,3 +52,35 @@ test('scores jobs locally and posts fit data back to the dashboard', async () =>
   assert.equal(updates[0].fit.score, 91);
   assert.match(logs.join('\n'), /Selected 1 job/);
 });
+
+test('spaces AI scoring requests when a cooldown is configured', async () => {
+  const waits = [];
+  await scoreJobsWithAi({
+    client: {
+      async fetchProfile() { return { skills: [] }; },
+      async fetchJobs() {
+        return [
+          { id: 'job-1', title: 'One', description: 'content' },
+          { id: 'job-2', title: 'Two', description: 'content' },
+        ];
+      },
+      async updateJobFit() { return {}; },
+    },
+    cooldownMs: 250,
+    wait: ms => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+    generateFitScore: async () => ({
+      score: 80,
+      category: 'good',
+      matchedSkills: [],
+      missingSkills: [],
+      riskFlags: [],
+      recommendation: 'review',
+      reasons: [],
+    }),
+  });
+
+  assert.deepEqual(waits, [250]);
+});

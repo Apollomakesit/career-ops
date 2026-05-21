@@ -4,9 +4,14 @@ import assert from 'node:assert/strict';
 import { createDashboardServer, resolveDashboardServices } from '../src/server.mjs';
 
 test('serves health response through HTTP', async () => {
+  let healthCalls = 0;
   const server = createDashboardServer({
     store: {
       async getProfile() { return {}; },
+      async health() {
+        healthCalls += 1;
+        return { ok: true, dialect: 'memory' };
+      },
     },
   });
 
@@ -17,6 +22,9 @@ test('serves health response through HTTP', async () => {
     const body = await response.json();
     assert.equal(response.status, 200);
     assert.equal(body.ok, true);
+    assert.equal(body.database.ok, true);
+    assert.equal(body.database.dialect, 'memory');
+    assert.equal(healthCalls, 1);
   } finally {
     await close(server);
   }
@@ -70,6 +78,38 @@ test('serves dashboard shell while protecting API data when token is configured'
       delete process.env.DASHBOARD_TOKEN;
     } else {
       process.env.DASHBOARD_TOKEN = previousToken;
+    }
+  }
+});
+
+test('production auth mode rejects API requests when no dashboard token is configured', async () => {
+  const previousToken = process.env.DASHBOARD_TOKEN;
+  const previousRequired = process.env.DASHBOARD_AUTH_REQUIRED;
+  delete process.env.DASHBOARD_TOKEN;
+  process.env.DASHBOARD_AUTH_REQUIRED = '1';
+  const server = createDashboardServer({
+    store: {
+      async getProfile() { return {}; },
+    },
+  });
+
+  await listen(server);
+  try {
+    const response = await fetch(`${addressFor(server)}/api/profile`);
+    const body = await response.json();
+    assert.equal(response.status, 503);
+    assert.equal(body.error, 'dashboard_token_required');
+  } finally {
+    await close(server);
+    if (previousToken === undefined) {
+      delete process.env.DASHBOARD_TOKEN;
+    } else {
+      process.env.DASHBOARD_TOKEN = previousToken;
+    }
+    if (previousRequired === undefined) {
+      delete process.env.DASHBOARD_AUTH_REQUIRED;
+    } else {
+      process.env.DASHBOARD_AUTH_REQUIRED = previousRequired;
     }
   }
 });

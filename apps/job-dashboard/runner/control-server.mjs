@@ -29,7 +29,7 @@ const handleControlRequest = createControlHandler({
 });
 
 const server = createServer(async (req, res) => {
-  writeCors(res);
+  writeCors(req, res);
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
@@ -72,8 +72,8 @@ const syncTimer = setInterval(() => {
 }, syncIntervalMs);
 syncWithDashboard().catch(() => {});
 
-function writeCors(res) {
-  for (const [key, value] of Object.entries(controlCorsHeaders())) {
+function writeCors(req, res) {
+  for (const [key, value] of Object.entries(controlCorsHeaders(req.headers.origin || ''))) {
     res.setHeader(key, value);
   }
 }

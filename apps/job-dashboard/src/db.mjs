@@ -10,7 +10,7 @@ const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultSqlitePath = path.join(appDir, '.data', 'career-ops.db');
 
 /**
- * Returns a database pool. When DATABASE_URL is set (e.g. Railway Postgres) a
+ * Returns a database pool. When DATABASE_URL is set, a
  * real pg pool is used; otherwise a local SQLite file-backed pool is created so
  * the dashboard runs fully offline with no external database.
  */
@@ -27,6 +27,10 @@ function createPgPool(connectionString) {
     ssl: needsSsl(connectionString) ? { rejectUnauthorized: false } : false,
   });
   pool.dialect = 'postgres';
+  pool.health = async () => {
+    const result = await pool.query('SELECT 1 AS ok');
+    return { ok: true, dialect: 'postgres', rows: result.rows };
+  };
   return pool;
 }
 
@@ -71,6 +75,7 @@ function createSqlitePool(filePath) {
   const db = new Database(filePath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma(`busy_timeout = ${Math.max(0, Number(process.env.SQLITE_BUSY_TIMEOUT_MS || 5000))}`);
 
   async function query(text, params = []) {
     const { sql, values } = translateQuery(text, params);
@@ -94,6 +99,9 @@ function createSqlitePool(filePath) {
     },
     async end() {
       db.close();
+    },
+    async health() {
+      return { ok: true, dialect: 'sqlite', rows: db.prepare('SELECT 1 AS ok').all() };
     },
     raw: db,
   };

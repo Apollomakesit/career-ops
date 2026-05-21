@@ -23,15 +23,34 @@ export function detectPortalSession({ portal = '', url = '', title = '', text = 
 }
 
 function detectLinkedIn(source) {
-  const authenticated = /my network/.test(source)
-    && /messaging/.test(source)
-    && /notifications/.test(source);
-  if (authenticated) return state({ authenticated: true, reason: 'linkedin-authenticated-shell' });
+  // Several authenticated-only signals — accept if any two are present.
+  // Requiring all three (my network + messaging + notifications) was too
+  // strict: a single missing nav item on a search page made the runner
+  // bounce a legitimately logged-in session.
+  const authSignals = [
+    /my network/,
+    /messaging/,
+    /notifications/,
+    /sign out/,
+    /\blog out\b/,
+    /linkedin\.com\/feed/,
+    /linkedin\.com\/in\//,
+    /linkedin\.com\/mynetwork/,
+    /linkedin\.com\/jobs\/collections/,
+    /linkedin\.com\/messaging/,
+  ].filter(pattern => pattern.test(source)).length;
+  if (authSignals >= 2) return state({ authenticated: true, reason: 'linkedin-authenticated-shell' });
 
-  if (/sign in with google|continue with google/.test(source)) {
+  // Definite login wall: actual login URL, or a password prompt on a page
+  // with no auth signals. "Join now" / "sign in to view" alone aren't enough
+  // — LinkedIn shows those CTAs to logged-in users too.
+  if (authSignals === 0 && /sign in with google|continue with google/.test(source)) {
     return state({ needsLogin: true, reason: 'linkedin-google-sign-in' });
   }
-  if (/linkedin login|join now|sign in to view|new to linkedin|email or phone password/.test(source)) {
+  if (/linkedin\.com\/login\b|linkedin\.com\/uas\/login\b|linkedin\.com\/checkpoint/.test(source)) {
+    return state({ needsLogin: true, reason: 'linkedin-login-wall' });
+  }
+  if (authSignals === 0 && /email or phone password/.test(source)) {
     return state({ needsLogin: true, reason: 'linkedin-login-wall' });
   }
   return state({ reason: 'linkedin-no-auth-wall' });

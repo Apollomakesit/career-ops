@@ -70,6 +70,23 @@ test('builds searches from dashboard portal rows, merges fallback keywords, and 
   assert.ok(plan.some(item => item.keyword === 'Fallback'));
 });
 
+test('can include disabled portals for existing job detail rescans', () => {
+  const portals = normalizePortalRows([
+    {
+      portal: 'linkedin',
+      fieldHints: {
+        discovery: {
+          enabled: false,
+          keywords: ['Python'],
+        },
+      },
+    },
+  ], { includeDisabled: true });
+
+  assert.equal(portals.length, 1);
+  assert.equal(portals[0].portal, 'linkedin');
+});
+
 test('derives discovery keywords from target roles and profile skills without support-role leakage', () => {
   const keywords = keywordsFromProfile({
     targetRoles: ['Backend Engineer'],

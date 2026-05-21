@@ -6,6 +6,7 @@ import { clearMatcherContextCache, getMatcherContext, scoreJob } from './cv-matc
 import { invalidateCvCache } from './cv-parser.mjs';
 import { scoreJobFit } from './fit-score.mjs';
 import { invalidateProjectsCache } from './projects-loader.mjs';
+import { deriveJobFields } from './job-derivers.mjs';
 import {
   generateAiFitScore as defaultGenerateAiFitScore,
   generateApplicationPackage as defaultGenerateApplicationPackage,
@@ -27,7 +28,7 @@ export async function dispatchApi(request, store, services = {}) {
 
   try {
     if (method === 'GET' && url.pathname === '/api/health') {
-      return json(200, { ok: true, service: 'career-ops-job-dashboard' });
+      return healthResponse(store);
     }
 
     if (method === 'GET' && url.pathname === '/api/profile') {
@@ -40,6 +41,9 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'PUT' && url.pathname === '/api/cv') {
       const markdown = typeof request.body === 'string' ? request.body : String((request.body || {}).markdown || '');
+      if (!markdown.trim()) {
+        return json(400, { error: 'cv_markdown_required', message: 'CV markdown cannot be empty.' });
+      }
       const result = await writeCv(markdown);
       invalidateCvCache();
       invalidateProjectsCache();
@@ -66,6 +70,12 @@ export async function dispatchApi(request, store, services = {}) {
       return json(200, await store.upsertPortal({ ...(request.body || {}), portal: segments[2] }));
     }
 
+    if (method === 'GET' && url.pathname === '/api/jobs/stats') {
+      return json(200, typeof store.listJobStats === 'function'
+        ? await store.listJobStats()
+        : { total: 0, incomplete: 0, byPortal: [] });
+    }
+
     if (method === 'GET' && url.pathname === '/api/jobs') {
       return json(200, await store.listJobs(filtersFromSearch(url.searchParams)));
     }
@@ -81,6 +91,23 @@ export async function dispatchApi(request, store, services = {}) {
       return json(201, await store.createJob({ ...(request.body || {}), fit, cvMatch }));
     }
 
+    if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[2] === 'bulk') {
+      const ids = arrayOfStrings((request.body || {}).ids);
+      const status = String((request.body || {}).status || '').trim();
+      if (ids.length === 0 || !status) return json(400, { error: 'ids_and_status_required' });
+      return json(200, typeof store.updateJobStatuses === 'function'
+        ? await store.updateJobStatuses(ids, status)
+        : { updated: 0 });
+    }
+
+    if (method === 'DELETE' && segments[0] === 'api' && segments[1] === 'jobs' && segments[2] === 'bulk') {
+      const ids = arrayOfStrings((request.body || {}).ids);
+      if (ids.length === 0) return json(400, { error: 'ids_required' });
+      return json(200, typeof store.deleteJobs === 'function'
+        ? await store.deleteJobs(ids)
+        : { deleted: 0 });
+    }
+
     if (method === 'GET' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'detail') {
       const job = typeof store.getJobDetail === 'function'
         ? await store.getJobDetail(segments[2])
@@ -90,6 +117,9 @@ export async function dispatchApi(request, store, services = {}) {
     }
 
     if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'fit') {
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      if (!hasFitScorePayload(request.body || {})) return json(400, { error: 'fit_score_required' });
       return json(200, await store.updateJobFit(segments[2], request.body || {}));
     }
 
@@ -98,12 +128,13 @@ export async function dispatchApi(request, store, services = {}) {
       if (!job) return json(404, { error: 'job_not_found' });
       const profile = await store.getProfile();
       try {
+        const matcherContext = await getMatcherContext();
         const generated = await generateAiFitScore({
           profile,
           job,
           rulesFit: jobToFit(job),
-          cv: (await getMatcherContext()).cv,
-          projects: (await getMatcherContext()).projects,
+          cv: matcherContext.cv,
+          projects: matcherContext.projects,
           provider: services.aiProvider,
           apiKey: services.aiApiKey ?? services.openaiApiKey,
           model: services.aiModel ?? services.openaiModel,
@@ -124,18 +155,20 @@ export async function dispatchApi(request, store, services = {}) {
       if (!job) return json(404, { error: 'job_not_found' });
       const profile = await store.getProfile();
       try {
+        const matcherContext = await getMatcherContext();
         const generated = await generateApplicationPackage({
           profile,
           job,
-          cv: (await getMatcherContext()).cv,
-          projects: (await getMatcherContext()).projects,
+          cv: matcherContext.cv,
+          projects: matcherContext.projects,
           provider: services.aiProvider,
           apiKey: services.aiApiKey ?? services.openaiApiKey,
           model: services.aiModel ?? services.openaiModel,
           baseUrl: services.aiBaseUrl,
           fetchImpl: services.fetchImpl,
         });
-        return json(201, await store.createPackage(segments[2], generated));
+        const pkg = await store.createPackage(segments[2], generated);
+        return json(pkg?.wasCreated === false ? 200 : 201, pkg);
       } catch (error) {
         if (error.code === 'ai_not_configured' || error.code === 'ai_generation_failed') {
           return json(error.status || 424, { error: error.code, message: error.message });
@@ -151,7 +184,10 @@ export async function dispatchApi(request, store, services = {}) {
     }
 
     if (method === 'POST' && segments[0] === 'api' && segments[1] === 'jobs' && segments[3] === 'package') {
-      return json(201, await store.createPackage(segments[2], request.body || {}));
+      const job = await store.getJob(segments[2]);
+      if (!job) return json(404, { error: 'job_not_found' });
+      const pkg = await store.createPackage(segments[2], request.body || {});
+      return json(pkg?.wasCreated === false ? 200 : 201, pkg);
     }
 
     if (method === 'POST' && segments[0] === 'api' && segments[1] === 'packages' && segments[3] === 'approve') {
@@ -184,6 +220,10 @@ export async function dispatchApi(request, store, services = {}) {
 
     if (method === 'POST' && url.pathname === '/api/runner/commands') {
       return json(202, await store.createRunnerCommand(request.body || {}));
+    }
+
+    if (method === 'POST' && url.pathname === '/api/runner/start') {
+      return json(202, await proxyRunner(fetchImpl, '/start', { method: 'POST', body: request.body || {} }));
     }
 
     if (method === 'POST' && ['/api/runner/pause', '/api/runner/resume', '/api/runner/stop'].includes(url.pathname)) {
@@ -224,6 +264,12 @@ async function defaultWriteCv(markdown) {
 
 export function createPostgresStore(pool) {
   return {
+    async health() {
+      if (typeof pool.health === 'function') return pool.health();
+      const result = await pool.query('SELECT 1 AS ok');
+      return { ok: true, dialect: pool.dialect || 'postgres', rows: result.rows };
+    },
+
     async getProfile() {
       const result = await pool.query(`
         SELECT full_name AS "fullName", email, phone, location, linkedin, github, headline,
@@ -294,6 +340,7 @@ export function createPostgresStore(pool) {
 
     async listJobs(filters = {}) {
       const { where, params } = buildJobsWhere(filters, pool.dialect);
+      const limit = limitParam(filters.limit) || 200;
       const result = await pool.query(`
         SELECT id, url, company, title, portal, location, description, source, status,
                substr(description, 1, 300) AS "descriptionPreview",
@@ -316,7 +363,7 @@ export function createPostgresStore(pool) {
         ${pool.dialect === 'sqlite'
           ? 'ORDER BY COALESCE(cv_match_score, 0) DESC, COALESCE(fit_score, 0) DESC, updated_at DESC'
           : 'ORDER BY cv_match_score DESC NULLS LAST, fit_score DESC NULLS LAST, updated_at DESC'}
-        LIMIT 200
+        LIMIT ${limit}
       `, params);
       return result.rows;
     },
@@ -349,9 +396,39 @@ export function createPostgresStore(pool) {
       return this.getJob(id);
     },
 
+    async listJobStats() {
+      const incomplete = jobIncompleteSql();
+      const [totalResult, portalResult] = await Promise.all([
+        pool.query(`
+          SELECT COUNT(*) AS total,
+                 SUM(CASE WHEN ${incomplete} THEN 1 ELSE 0 END) AS incomplete
+          FROM jobs
+        `),
+        pool.query(`
+          SELECT COALESCE(NULLIF(portal, ''), 'unknown') AS portal,
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN ${incomplete} THEN 1 ELSE 0 END) AS incomplete
+          FROM jobs
+          GROUP BY COALESCE(NULLIF(portal, ''), 'unknown')
+          ORDER BY portal
+        `),
+      ]);
+      const totalRow = totalResult.rows[0] || {};
+      return {
+        total: Number(totalRow.total || 0),
+        incomplete: Number(totalRow.incomplete || 0),
+        byPortal: portalResult.rows.map(row => ({
+          portal: row.portal,
+          total: Number(row.total || 0),
+          incomplete: Number(row.incomplete || 0),
+        })),
+      };
+    },
+
     async createJob(job) {
       const fit = job.fit || scoreJobFit(job);
       const cvMatch = normalizeCvMatchPayload(job.cvMatch || {});
+      const derived = deriveJobFields(job);
       const result = await pool.query(`
         INSERT INTO jobs (
           url, company, title, portal, location, description, source, status,
@@ -428,9 +505,9 @@ export function createPostgresStore(pool) {
         nullableNumber(job.salary_max ?? job.salaryMax),
         String(job.salary_currency ?? job.salaryCurrency ?? ''),
         String(job.salary_period ?? job.salaryPeriod ?? ''),
-        String(job.work_model ?? job.workModel ?? 'unknown'),
+        derived.work_model,
         String(job.employment_type ?? job.employmentType ?? 'unknown'),
-        job.posted_date ?? job.postedDate ?? null,
+        derived.posted_date,
         String(job.requirements_text ?? job.requirementsText ?? ''),
         String(job.responsibilities_text ?? job.responsibilitiesText ?? ''),
         cvMatch.score,
@@ -472,6 +549,33 @@ export function createPostgresStore(pool) {
       ]);
       await appendEvent(pool, 'job', id, 'job_fit_updated', `AI fit updated: ${normalized.score}%`, normalized);
       return result.rows[0] || null;
+    },
+
+    async updateJobStatuses(ids, status) {
+      const cleanIds = arrayOfStrings(ids);
+      if (cleanIds.length === 0) return { updated: 0 };
+      const params = [status, ...cleanIds];
+      const placeholders = cleanIds.map((_, index) => `$${index + 2}`).join(', ');
+      const result = await pool.query(`
+        UPDATE jobs
+        SET status = $1,
+            updated_at = now()
+        WHERE id IN (${placeholders})
+      `, params);
+      await appendEvent(pool, 'job', null, 'jobs_bulk_status_updated', `Updated ${result.rowCount || 0} job status(es) to ${status}`, { ids: cleanIds, status });
+      return { updated: result.rowCount || 0 };
+    },
+
+    async deleteJobs(ids) {
+      const cleanIds = arrayOfStrings(ids);
+      if (cleanIds.length === 0) return { deleted: 0 };
+      const placeholders = cleanIds.map((_, index) => `$${index + 1}`).join(', ');
+      const result = await pool.query(`
+        DELETE FROM jobs
+        WHERE id IN (${placeholders})
+      `, cleanIds);
+      await appendEvent(pool, 'job', null, 'jobs_bulk_deleted', `Deleted ${result.rowCount || 0} job(s)`, { ids: cleanIds });
+      return { deleted: result.rowCount || 0 };
     },
 
     async updateJobCvMatch(id, cvMatch) {
@@ -541,16 +645,26 @@ export function createPostgresStore(pool) {
     },
 
     async createPackage(jobId, payload) {
+      const existing = await pool.query('SELECT id FROM application_packages WHERE job_id = $1', [jobId]);
+      const wasCreated = existing.rows.length === 0;
       const result = await pool.query(`
         INSERT INTO application_packages (
           job_id, cover_letter, tailored_cv_md, required_fields, missing_fields,
           approval_state, runner_status, updated_at
         )
         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'draft', 'not_started', now())
+        ON CONFLICT (job_id) DO UPDATE SET
+          cover_letter = EXCLUDED.cover_letter,
+          tailored_cv_md = EXCLUDED.tailored_cv_md,
+          required_fields = EXCLUDED.required_fields,
+          missing_fields = EXCLUDED.missing_fields,
+          approval_state = 'draft',
+          runner_status = 'not_started',
+          updated_at = now()
         RETURNING id, job_id AS "jobId", cover_letter AS "coverLetter",
                   tailored_cv_md AS "tailoredCvMd", required_fields AS "requiredFields",
                   missing_fields AS "missingFields", approval_state AS "approvalState",
-                  runner_status AS "runnerStatus"
+                  runner_status AS "runnerStatus", updated_at AS "updatedAt"
       `, [
         jobId,
         payload.coverLetter || '',
@@ -558,8 +672,15 @@ export function createPostgresStore(pool) {
         JSON.stringify(payload.requiredFields || {}),
         JSON.stringify(payload.missingFields || {}),
       ]);
-      await appendEvent(pool, 'package', result.rows[0].id, 'package_created', 'Application package created', {});
-      return result.rows[0];
+      await appendEvent(
+        pool,
+        'package',
+        result.rows[0].id,
+        wasCreated ? 'package_created' : 'package_updated',
+        wasCreated ? 'Application package created' : 'Application package updated',
+        {},
+      );
+      return { ...result.rows[0], wasCreated };
     },
 
     async approvePackage(id) {
@@ -737,6 +858,28 @@ export function json(status, body) {
   return { status, body };
 }
 
+async function healthResponse(store) {
+  try {
+    const database = typeof store.health === 'function'
+      ? await store.health()
+      : { ok: true, dialect: 'unknown' };
+    return json(200, {
+      ok: true,
+      service: 'career-ops-job-dashboard',
+      database: { ...database, ok: database?.ok !== false },
+    });
+  } catch (error) {
+    return json(503, {
+      ok: false,
+      service: 'career-ops-job-dashboard',
+      database: {
+        ok: false,
+        message: error.message,
+      },
+    });
+  }
+}
+
 async function appendEvent(pool, entityType, entityId, eventType, message, payload) {
   await pool.query(`
     INSERT INTO events (entity_type, entity_id, event_type, message, payload)
@@ -769,6 +912,13 @@ function normalizeFitPayload(fit = {}) {
   };
 }
 
+function hasFitScorePayload(fit = {}) {
+  const score = fit.score ?? fit.fitScore;
+  if (score === undefined || score === null) return false;
+  if (typeof score === 'string' && !score.trim()) return false;
+  return Number.isFinite(Number(score));
+}
+
 function normalizeCvMatchPayload(cvMatch = {}) {
   const score = Number(cvMatch.score ?? cvMatch.cvMatchScore ?? 0);
   const breakdown = cvMatch.breakdown || cvMatch.cvMatchBreakdown || {};
@@ -781,6 +931,20 @@ function normalizeCvMatchPayload(cvMatch = {}) {
       skills: clampPercent(breakdown.skills),
       projects: clampPercent(breakdown.projects),
       role: clampPercent(breakdown.role),
+      dataQuality: clampPercent(breakdown.dataQuality),
+      confidence: String(breakdown.confidence || '').trim(),
+      rescanRecommended: Boolean(breakdown.rescanRecommended),
+      requiredSkills: arrayOfStrings(breakdown.requiredSkills),
+      matchedRequiredSkills: arrayOfStrings(breakdown.matchedRequiredSkills),
+      matchedCvSkills: arrayOfStrings(breakdown.matchedCvSkills),
+      projectSupportedSkills: arrayOfStrings(breakdown.projectSupportedSkills),
+      matchedSkillDetails: arrayOfStrings(breakdown.matchedSkillDetails),
+      missingSkillDetails: arrayOfStrings(breakdown.missingSkillDetails),
+      matchedProjectDetails: arrayOfStrings(breakdown.matchedProjectDetails),
+      exceedingSkills: arrayOfStrings(breakdown.exceedingSkills),
+      exceedingSignals: arrayOfStrings(breakdown.exceedingSignals),
+      penalties: arrayOfStrings(breakdown.penalties),
+      scoreFormula: String(breakdown.scoreFormula || '').trim(),
     },
   };
 }
@@ -805,6 +969,8 @@ function filtersFromSearch(searchParams) {
     postedWithinDays: numericParam(searchParams.get('postedWithinDays')),
     minMatch: numericParam(searchParams.get('minMatch')),
     maxMatch: numericParam(searchParams.get('maxMatch')),
+    incomplete: boolParam(searchParams.get('incomplete')),
+    limit: limitParam(searchParams.get('limit')),
     q: searchParams.get('q') || '',
   };
 }
@@ -827,6 +993,7 @@ function buildJobsWhere(filters = {}, dialect = 'postgres') {
   if (filters.currency) clauses.push(`salary_currency = ${add(filters.currency)}`);
   if (filters.minMatch != null) clauses.push(`cv_match_score >= ${add(filters.minMatch)}`);
   if (filters.maxMatch != null) clauses.push(`cv_match_score <= ${add(filters.maxMatch)}`);
+  if (filters.incomplete) clauses.push(`(${jobIncompleteSql()})`);
   if (filters.q) {
     const placeholder = add(`%${String(filters.q).toLowerCase()}%`);
     clauses.push(`(LOWER(title) LIKE ${placeholder} OR LOWER(description) LIKE ${placeholder})`);
@@ -841,6 +1008,18 @@ function buildJobsWhere(filters = {}, dialect = 'postgres') {
     where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
     params,
   };
+}
+
+function jobIncompleteSql() {
+  return [
+    "COALESCE(url, '') = ''",
+    "COALESCE(title, '') = ''",
+    "COALESCE(company, '') = ''",
+    "COALESCE(description, '') = ''",
+    'LENGTH(COALESCE(description, \'\')) < 240',
+    "COALESCE(source, '') LIKE '%:partial-detail%'",
+    "COALESCE(source, '') NOT LIKE '%:detail%'",
+  ].join(' OR ');
 }
 
 async function proxyRunner(fetchImpl, pathName, { method = 'GET', body } = {}) {
@@ -863,6 +1042,17 @@ function numericParam(value) {
   if (value == null || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function boolParam(value) {
+  return ['1', 'true', 'yes'].includes(String(value || '').trim().toLowerCase());
+}
+
+function limitParam(value) {
+  if (value == null || value === '') return null;
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.min(parsed, 5000);
 }
 
 function arrayOfStrings(value) {

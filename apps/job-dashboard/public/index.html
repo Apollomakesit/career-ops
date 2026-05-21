@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Career Ops Dashboard</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%23006d77'/%3E%3Ctext x='50' y='64' font-size='42' text-anchor='middle' fill='white' font-family='Arial,sans-serif' font-weight='700'%3ECO%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -31,7 +32,10 @@
           <h1>Career Ops Dashboard</h1>
           <p>Fit scoring, draft review, approval queue, and local runner status.</p>
         </div>
-        <button id="refreshButton" class="primary-button">Refresh</button>
+        <div class="button-row">
+          <button id="themeToggle" class="secondary-button" type="button">Dark</button>
+          <button id="refreshButton" class="primary-button">Refresh</button>
+        </div>
       </header>
 
       <section id="applications" class="view active">
@@ -42,10 +46,12 @@
         <div class="runner-control-panel">
           <div class="global-controls">
             <button class="primary-button" data-start-runner="discover">Start All</button>
+            <button class="secondary-button" data-start-runner="discover" data-runner-mode="missing">Rescan Incomplete</button>
             <button class="secondary-button" data-runner-action="pause">Pause All</button>
             <button class="secondary-button" data-runner-action="resume">Resume All</button>
             <button class="secondary-button danger" data-runner-action="stop">Stop All</button>
           </div>
+          <div id="jobStatsSummary" class="stats-strip"></div>
           <div id="portalProgressCards" class="portal-progress-grid"></div>
         </div>
         <div class="filter-bar">
@@ -56,9 +62,24 @@
           <label>Currency<select id="filterCurrency"><option value="">Any</option><option value="EUR">EUR</option><option value="RON">RON</option><option value="USD">USD</option></select></label>
           <label>Posted<select id="filterPostedWithin"><option value="">Any</option><option value="1">1d</option><option value="3">3d</option><option value="7">7d</option><option value="30">30d</option></select></label>
           <label>Min CV match<input id="filterMinMatch" type="range" min="0" max="100" value="0"></label>
-          <label class="wide">Search<input id="filterSearch" placeholder="Title or description"></label>
+          <label class="wide">Search<input id="filterSearch" placeholder="Title or description" type="search" autocomplete="off" name="careerOpsJobSearch"></label>
+          <button id="clearFiltersButton" type="button" class="secondary-button">Clear filters</button>
+        </div>
+        <div id="bulkToolbar" class="bulk-toolbar">
+          <strong id="bulkCount">0 selected</strong>
+          <button id="selectVisibleJobsButton" class="secondary-button" type="button">Select Visible</button>
+          <button id="clearJobSelectionButton" class="secondary-button" type="button">Clear</button>
+          <button id="bulkAiScoreButton" class="secondary-button" type="button">AI Score</button>
+          <button id="bulkAppliedButton" class="secondary-button" type="button">Applied</button>
+          <button id="bulkRejectedButton" class="secondary-button" type="button">Rejected</button>
+          <button id="bulkDiscardedButton" class="secondary-button" type="button">Discard</button>
+          <button id="bulkDeleteButton" class="secondary-button danger" type="button">Delete</button>
+          <button id="exportJobsButton" class="secondary-button" type="button">Export</button>
+          <button id="importJobsButton" class="secondary-button" type="button">Import</button>
+          <input id="importJobsInput" type="file" accept=".json,.csv,text/csv,application/json" hidden>
         </div>
         <div id="jobsTable" class="table"></div>
+        <div id="jobsPagination" class="pagination"></div>
       </section>
 
       <section id="review" class="view">
@@ -183,6 +204,14 @@
         <div class="section-head">
           <h2>Activity</h2>
         </div>
+        <div class="filter-bar activity-filters">
+          <label>Search<input id="activitySearch" type="search" autocomplete="off"></label>
+          <label>Type<select id="activityType"><option value="">Any</option></select></label>
+          <label>Portal<select id="activityPortal"><option value="">Any</option><option value="ejobs">eJobs</option><option value="bestjobs">BestJobs</option><option value="hipo">HiPo</option><option value="linkedin">LinkedIn</option></select></label>
+          <label>From<input id="activityFrom" type="date"></label>
+          <label>To<input id="activityTo" type="date"></label>
+          <button id="clearActivityFiltersButton" type="button" class="secondary-button">Clear</button>
+        </div>
         <div id="eventsList" class="stack"></div>
       </section>
     </main>
@@ -215,6 +244,19 @@
         <div id="jobDetailsBody" class="details-body"></div>
       </div>
     </dialog>
+
+    <dialog id="confirmDialog">
+      <form method="dialog" class="dialog-form confirm-dialog">
+        <h2 id="confirmTitle">Confirm</h2>
+        <p id="confirmMessage" class="muted"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="secondary-button">Cancel</button>
+          <button id="confirmOkButton" value="ok" class="primary-button">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="false"></div>
 
     <script src="/app.js" type="module"></script>
   </body>

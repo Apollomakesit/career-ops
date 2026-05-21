@@ -34,6 +34,20 @@ test('parses work model aliases', () => {
   assert.equal(parseWorkModel('program flexibil'), 'unknown');
 });
 
+test('hybrid wins when both remote and hybrid appear in body text', () => {
+  // The dashboard concatenates work-model selector hits with description text,
+  // so postings that link "Remote Jobs" in their sidebar but say "Hybrid" in
+  // the body must classify as hybrid.
+  assert.equal(parseWorkModel('Remote Jobs\nRemote work: Hybrid'), 'hybrid');
+  assert.equal(parseWorkModel('Bucharest, Romania (Hybrid)'), 'hybrid');
+});
+
+test('parses office-based aliases as onsite', () => {
+  assert.equal(parseWorkModel('Customer Support - Office Based'), 'onsite');
+  assert.equal(parseWorkModel('Work office based, One Cotroceni Park'), 'onsite');
+  assert.equal(parseWorkModel('fully onsite role'), 'onsite');
+});
+
 test('parses posted dates from relative and absolute text', () => {
   const now = new Date('2026-05-20T12:00:00.000Z');
   assert.equal(parsePostedDate('acum 3 zile', now), '2026-05-17T12:00:00.000Z');

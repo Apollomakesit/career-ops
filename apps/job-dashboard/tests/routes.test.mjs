@@ -17,10 +17,15 @@ function createStore() {
     events: [],
     runnerState: {},
     runnerCommands: [],
+    healthCalls: 0,
   };
 
   return {
     state,
+    async health() {
+      state.healthCalls += 1;
+      return { ok: true, dialect: 'memory' };
+    },
     async getProfile() { return state.profile; },
     async updateProfile(profile) { state.profile = profile; return profile; },
     async listPortals() { return state.portals; },
@@ -29,6 +34,21 @@ function createStore() {
       return portal;
     },
     async listJobs() { return state.jobs; },
+    async listJobStats() {
+      const byPortal = {};
+      let incomplete = 0;
+      for (const job of state.jobs) {
+        const portal = job.portal || 'unknown';
+        byPortal[portal] ||= { portal, total: 0, incomplete: 0 };
+        byPortal[portal].total += 1;
+        const isIncomplete = !job.description || job.description.length < 240 || String(job.source || '').includes(':partial-detail');
+        if (isIncomplete) {
+          incomplete += 1;
+          byPortal[portal].incomplete += 1;
+        }
+      }
+      return { total: state.jobs.length, incomplete, byPortal: Object.values(byPortal) };
+    },
     async listJobDetails(id) { return state.jobs.find(job => job.id === id) || null; },
     async getJob(id) { return state.jobs.find(job => job.id === id) || null; },
     async createJob(job) {
@@ -49,13 +69,33 @@ function createStore() {
       });
       return job;
     },
+    async updateJobStatuses(ids, status) {
+      let updated = 0;
+      for (const job of state.jobs) {
+        if (ids.includes(job.id)) {
+          job.status = status;
+          updated += 1;
+        }
+      }
+      return { updated };
+    },
+    async deleteJobs(ids) {
+      const before = state.jobs.length;
+      state.jobs = state.jobs.filter(job => !ids.includes(job.id));
+      return { deleted: before - state.jobs.length };
+    },
     async listPackages(filter) {
       return filter?.approvalState
         ? state.packages.filter(pkg => pkg.approvalState === filter.approvalState)
         : state.packages;
     },
     async createPackage(jobId, payload) {
-      const created = { id: 'pkg-1', jobId, approvalState: 'draft', runnerStatus: 'not_started', ...payload };
+      const existing = state.packages.find(item => item.jobId === jobId);
+      if (existing) {
+        Object.assign(existing, { approvalState: 'draft', runnerStatus: 'not_started', ...payload, wasCreated: false });
+        return existing;
+      }
+      const created = { id: `pkg-${state.packages.length + 1}`, jobId, approvalState: 'draft', runnerStatus: 'not_started', ...payload, wasCreated: true };
       state.packages.push(created);
       return created;
     },
@@ -101,10 +141,28 @@ function createStore() {
   };
 }
 
-test('dispatches health without a database call', async () => {
-  const response = await dispatchApi({ method: 'GET', url: '/api/health' }, createStore());
+test('dispatches health with database connectivity details', async () => {
+  const store = createStore();
+  const response = await dispatchApi({ method: 'GET', url: '/api/health' }, store);
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
+  assert.equal(response.body.database.ok, true);
+  assert.equal(response.body.database.dialect, 'memory');
+  assert.equal(store.state.healthCalls, 1);
+});
+
+test('reports unhealthy database state from health endpoint', async () => {
+  const store = createStore();
+  store.health = async () => {
+    throw new Error('database unavailable');
+  };
+
+  const response = await dispatchApi({ method: 'GET', url: '/api/health' }, store);
+
+  assert.equal(response.status, 503);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.database.ok, false);
+  assert.match(response.body.database.message, /database unavailable/);
 });
 
 test('updates profile', async () => {
@@ -155,6 +213,24 @@ test('updates canonical CV markdown and can request a deterministic re-score', a
   assert.equal(rescore.body.updated, 0);
 });
 
+test('rejects empty canonical CV markdown updates', async () => {
+  const writes = [];
+  const response = await dispatchApi({
+    method: 'PUT',
+    url: '/api/cv',
+    body: { markdown: '   ' },
+  }, createStore(), {
+    writeCv: async markdown => {
+      writes.push(markdown);
+      return { markdown };
+    },
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'cv_markdown_required');
+  assert.deepEqual(writes, []);
+});
+
 test('creates a job with fit scoring', async () => {
   const store = createStore();
   const response = await dispatchApi({
@@ -199,8 +275,103 @@ test('returns expanded job detail fields', async () => {
   assert.deepEqual(response.body.cvMatchedProjects, ['Project Helios']);
 });
 
+test('updates and deletes jobs in bulk', async () => {
+  const store = createStore();
+  store.state.jobs = [
+    { id: 'job-1', title: 'One', status: 'discovered' },
+    { id: 'job-2', title: 'Two', status: 'discovered' },
+  ];
+
+  const updated = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/bulk',
+    body: { ids: ['job-1', 'job-2'], status: 'rejected' },
+  }, store);
+
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.updated, 2);
+  assert.deepEqual(store.state.jobs.map(job => job.status), ['rejected', 'rejected']);
+
+  const deleted = await dispatchApi({
+    method: 'DELETE',
+    url: '/api/jobs/bulk',
+    body: { ids: ['job-1'] },
+  }, store);
+
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.body.deleted, 1);
+  assert.deepEqual(store.state.jobs.map(job => job.id), ['job-2']);
+});
+
+test('returns job totals by portal and incomplete data counts', async () => {
+  const store = createStore();
+  store.state.jobs.push(
+    { id: 'job-1', portal: 'ejobs', description: 'Detailed posting '.repeat(40), source: 'portal-discovery:ejobs:detail' },
+    { id: 'job-2', portal: 'ejobs', description: 'Short listing', source: 'portal-discovery:ejobs:partial-detail' },
+    { id: 'job-3', portal: 'linkedin', description: '', source: 'portal-discovery:linkedin' },
+  );
+
+  const response = await dispatchApi({ method: 'GET', url: '/api/jobs/stats' }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.total, 3);
+  assert.equal(response.body.incomplete, 2);
+  assert.deepEqual(response.body.byPortal.find(item => item.portal === 'ejobs'), {
+    portal: 'ejobs',
+    total: 2,
+    incomplete: 1,
+  });
+});
+
+test('passes incomplete job paging filters to the store', async () => {
+  const store = createStore();
+  let seenFilters = null;
+  store.listJobs = async filters => {
+    seenFilters = filters;
+    return [];
+  };
+
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/jobs?incomplete=1&limit=5000&portal=linkedin,ejobs',
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(seenFilters.incomplete, true);
+  assert.equal(seenFilters.limit, 5000);
+  assert.deepEqual(seenFilters.portal, ['linkedin', 'ejobs']);
+});
+
+test('proxies runner start with portal and rescan mode', async () => {
+  const calls = [];
+  const store = createStore();
+  const response = await dispatchApi({
+    method: 'POST',
+    url: '/api/runner/start',
+    body: { runner: 'discover', portal: 'linkedin', mode: 'missing' },
+  }, store, {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      return {
+        ok: true,
+        status: 202,
+        async json() { return { status: 'running' }; },
+      };
+    },
+  });
+
+  assert.equal(response.status, 202);
+  assert.equal(calls[0].url, 'http://127.0.0.1:48731/start');
+  assert.deepEqual(calls[0].body, { runner: 'discover', portal: 'linkedin', mode: 'missing' });
+});
+
 test('approves package and exposes approved queue', async () => {
   const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { title: 'Application Support Engineer', company: 'ExampleSoft' },
+  }, store);
   await dispatchApi({
     method: 'POST',
     url: '/api/jobs/job-1/package',
@@ -218,6 +389,11 @@ test('runner can update package status without final submission', async () => {
   const store = createStore();
   await dispatchApi({
     method: 'POST',
+    url: '/api/jobs',
+    body: { title: 'Application Support Engineer', company: 'ExampleSoft' },
+  }, store);
+  await dispatchApi({
+    method: 'POST',
     url: '/api/jobs/job-1/package',
     body: { coverLetter: 'Hello', tailoredCvMd: '# CV' },
   }, store);
@@ -233,6 +409,17 @@ test('runner can update package status without final submission', async () => {
   assert.deepEqual(response.body.missingFields, { salary: 'required' });
 });
 
+test('manual package creation returns 404 for a missing job', async () => {
+  const response = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/missing-job/package',
+    body: { coverLetter: 'Hello', tailoredCvMd: '# CV' },
+  }, createStore());
+
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error, 'job_not_found');
+});
+
 test('updates a job fit score from the local AI scorer', async () => {
   const store = createStore();
   await dispatchApi({
@@ -244,6 +431,7 @@ test('updates a job fit score from the local AI scorer', async () => {
       description: 'ServiceNow MDM Python automation',
     },
   }, store);
+  store.state.jobs[0].fitScore = 88;
 
   const response = await dispatchApi({
     method: 'PATCH',
@@ -262,6 +450,41 @@ test('updates a job fit score from the local AI scorer', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.fitScore, 89);
   assert.equal(response.body.recommendation, 'apply');
+});
+
+test('manual fit updates require a score to avoid accidental zeroing', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: {
+      title: 'Application Support Engineer',
+      company: 'ExampleSoft',
+      description: 'ServiceNow MDM Python automation',
+    },
+  }, store);
+  store.state.jobs[0].fitScore = 88;
+
+  const response = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/job-1/fit',
+    body: { category: '' },
+  }, store);
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'fit_score_required');
+  assert.equal(store.state.jobs[0].fitScore, 88);
+});
+
+test('returns 404 when updating fit for a missing job', async () => {
+  const response = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/missing-job/fit',
+    body: { score: 80, category: 'strong' },
+  }, createStore());
+
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error, 'job_not_found');
 });
 
 test('generates an AI application package for a stored job', async () => {
@@ -294,6 +517,47 @@ test('generates an AI application package for a stored job', async () => {
   assert.equal(response.body.coverLetter, 'Dear ExampleSoft, Ioan Stefan Vlaicu is a strong fit.');
   assert.equal(response.body.approvalState, 'draft');
   assert.deepEqual(response.body.missingFields, { salary_expectation: 'Confirm before submitting.' });
+});
+
+test('regenerating an AI application package updates the existing package', async () => {
+  const store = createStore();
+  await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: {
+      title: 'Application Support Engineer',
+      company: 'ExampleSoft',
+      location: 'Bucharest',
+      description: 'ServiceNow MDM Python automation',
+    },
+  }, store);
+
+  const first = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/package/generate',
+    body: {},
+  }, store, {
+    generateApplicationPackage: async () => ({
+      coverLetter: 'First draft',
+      tailoredCvMd: '# First CV',
+    }),
+  });
+  const second = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs/job-1/package/generate',
+    body: {},
+  }, store, {
+    generateApplicationPackage: async () => ({
+      coverLetter: 'Second draft',
+      tailoredCvMd: '# Second CV',
+    }),
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.id, first.body.id);
+  assert.equal(second.body.coverLetter, 'Second draft');
+  assert.equal(store.state.packages.length, 1);
 });
 
 test('returns a setup error when AI generation is not configured', async () => {

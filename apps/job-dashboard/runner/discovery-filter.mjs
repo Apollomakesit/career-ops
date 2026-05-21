@@ -155,6 +155,16 @@ export function markPartialDescription(job = {}) {
   return { ...job, description, source };
 }
 
+export function needsDetailRescan(job = {}) {
+  const description = String(job.description || '').trim();
+  const source = String(job.source || '');
+  if (!job.url || !job.title || !job.company) return true;
+  if (!description || description.length < 240) return true;
+  if (source.includes(':partial-detail')) return true;
+  if (!source.includes(':detail')) return true;
+  return false;
+}
+
 function locationDecision(job = {}) {
   const text = normalizeText([job.location, job.title, job.description].join(' '));
   if (!text) return { allowed: true, details: 'missing-location' };

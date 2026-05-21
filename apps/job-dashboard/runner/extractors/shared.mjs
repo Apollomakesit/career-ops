@@ -23,10 +23,17 @@ export async function extractGenericDetail(page, {
   const requirements_text = sectionAfter(description, requirementHeadings);
   const responsibilities_text = sectionAfter(description, responsibilityHeadings);
   const salaryRaw = await firstText(page, salarySelectors) || lineMatching(description, /(\d[\d.\s,]*\s*-\s*\d|eur|ron|lei|usd|\$|€|salari)/i);
-  const workModelRaw = await firstText(page, workModelSelectors) || lineMatching(description, /(remote|hibrid|hybrid|la birou|la sediu|telemunca|work from home|on-site|onsite)/i);
-  const postedRaw = await firstText(page, postedSelectors) || lineMatching(description, /(acum|posted|ieri|astazi|\d{4}-\d{2}-\d{2})/i);
-  const employmentTypeRaw = await firstText(page, employmentSelectors) || lineMatching(description, /(full.?time|part.?time|contract|internship|b2b)/i);
+  const workModelRaw = await firstText(page, workModelSelectors);
+  const postedRaw = await firstText(page, postedSelectors);
+  const employmentTypeRaw = await firstText(page, employmentSelectors);
   const salary = parseSalary(salaryRaw);
+
+  // Scan ALL captured text for work model / employment / posted date instead
+  // of short-circuiting on the first non-empty selector hit. Earlier we'd take
+  // `.job-meta` text like "Limbi vorbite" as authoritative and miss the
+  // "Hybrid" further down the description.
+  const detailText = [workModelRaw, employmentTypeRaw, description].filter(Boolean).join('\n');
+  const postedText = [postedRaw, description].filter(Boolean).join('\n');
 
   return {
     description,
@@ -40,9 +47,9 @@ export async function extractGenericDetail(page, {
     salary_max: salary.max,
     salary_currency: salary.currency,
     salary_period: salary.period,
-    work_model: parseWorkModel(workModelRaw || description),
-    posted_date: parsePostedDate(postedRaw),
-    employment_type: parseEmploymentType(employmentTypeRaw || description),
+    work_model: parseWorkModel(detailText),
+    posted_date: parsePostedDate(postedRaw) || parsePostedDate(postedText),
+    employment_type: parseEmploymentType(detailText),
   };
 }
 

@@ -66,6 +66,110 @@ test('createJob upserts on duplicate url', async () => {
   assert.equal(list[0].title, 'Second');
 });
 
+test('job stats count totals and incomplete rows by portal', async () => {
+  const store = await freshStore();
+  await store.createJob({
+    url: 'https://example.com/job/complete',
+    portal: 'ejobs',
+    company: 'ExampleSoft',
+    title: 'Complete',
+    description: 'Detailed posting '.repeat(40),
+    source: 'portal-discovery:ejobs:detail',
+    fit: sampleFit,
+  });
+  await store.createJob({
+    url: 'https://example.com/job/incomplete',
+    portal: 'ejobs',
+    title: 'Incomplete',
+    description: 'Short listing',
+    source: 'portal-discovery:ejobs:partial-detail',
+    fit: sampleFit,
+  });
+  await store.createJob({
+    url: 'https://example.com/job/linkedin-incomplete',
+    portal: 'linkedin',
+    title: 'LinkedIn incomplete',
+    source: 'portal-discovery:linkedin',
+    fit: sampleFit,
+  });
+
+  const stats = await store.listJobStats();
+  assert.equal(stats.total, 3);
+  assert.equal(stats.incomplete, 2);
+  assert.deepEqual(stats.byPortal.find(item => item.portal === 'ejobs'), {
+    portal: 'ejobs',
+    total: 2,
+    incomplete: 1,
+  });
+  assert.deepEqual(stats.byPortal.find(item => item.portal === 'linkedin'), {
+    portal: 'linkedin',
+    total: 1,
+    incomplete: 1,
+  });
+});
+
+test('listJobs can return incomplete rows beyond the normal dashboard page', async () => {
+  const store = await freshStore();
+  for (let index = 0; index < 205; index += 1) {
+    await store.createJob({
+      url: `https://example.com/job/complete-${index}`,
+      portal: 'ejobs',
+      company: `Complete ${index}`,
+      title: `Complete Role ${index}`,
+      description: 'Detailed posting '.repeat(40),
+      source: 'portal-discovery:ejobs:detail',
+      fit: sampleFit,
+      cvMatch: { score: 99, matchedSkills: ['python'], missingSkills: [], matchedProjects: [] },
+    });
+  }
+  await store.createJob({
+    url: 'https://example.com/job/incomplete-outside-page',
+    portal: 'linkedin',
+    company: 'IncompleteCo',
+    title: 'Incomplete LinkedIn Role',
+    description: 'Short listing',
+    source: 'portal-discovery:linkedin:partial-detail',
+    fit: sampleFit,
+    cvMatch: { score: 0, matchedSkills: [], missingSkills: [], matchedProjects: [] },
+  });
+
+  const incomplete = await store.listJobs({ incomplete: true, limit: 500 });
+
+  assert.equal(incomplete.length, 1);
+  assert.equal(incomplete[0].title, 'Incomplete LinkedIn Role');
+});
+
+test('job CV match stores rich breakdown evidence', async () => {
+  const store = await freshStore();
+  const created = await store.createJob({
+    url: 'https://example.com/job/rich-match',
+    title: 'Technical Support Specialist',
+    fit: sampleFit,
+    cvMatch: {
+      score: 92,
+      matchedSkills: ['servicenow'],
+      missingSkills: ['ivanti'],
+      matchedProjects: ['Support Automation'],
+      breakdown: {
+        skills: 80,
+        projects: 100,
+        role: 100,
+        requiredSkills: ['servicenow', 'ivanti'],
+        matchedSkillDetails: ['servicenow - CV skills; Project: Support Automation'],
+        missingSkillDetails: ['ivanti - not found in CV skills or project proof'],
+        matchedProjectDetails: ['Support Automation - servicenow, python'],
+        exceedingSkills: ['python', 'playwright'],
+        exceedingSignals: ['Experience: 5+ years exceeds 3+ years requested'],
+      },
+    },
+  });
+
+  const fetched = await store.getJob(created.id);
+  assert.deepEqual(fetched.cvMatchBreakdown.requiredSkills, ['servicenow', 'ivanti']);
+  assert.deepEqual(fetched.cvMatchBreakdown.exceedingSkills, ['python', 'playwright']);
+  assert.ok(fetched.cvMatchBreakdown.matchedSkillDetails[0].includes('Support Automation'));
+});
+
 test('profile and portal updates persist', async () => {
   const store = await freshStore();
   await store.updateProfile({
@@ -101,6 +205,27 @@ test('packages create, approve, and report runner status', async () => {
   assert.equal(list.length, 1);
   assert.equal(list[0].company, '');
   assert.equal(list[0].title, 'Role');
+});
+
+test('packages are upserted per job instead of duplicated', async () => {
+  const store = await freshStore();
+  const job = await store.createJob({ url: 'https://example.com/job/pkg-upsert', title: 'Role', fit: sampleFit });
+
+  const first = await store.createPackage(job.id, {
+    coverLetter: 'First letter.',
+    tailoredCvMd: '# First CV',
+  });
+  const second = await store.createPackage(job.id, {
+    coverLetter: 'Second letter.',
+    tailoredCvMd: '# Second CV',
+  });
+  const list = await store.listPackages();
+
+  assert.equal(first.wasCreated, true);
+  assert.equal(second.wasCreated, false);
+  assert.equal(second.id, first.id);
+  assert.equal(second.coverLetter, 'Second letter.');
+  assert.equal(list.length, 1);
 });
 
 test('runner commands queue, claim, and update', async () => {

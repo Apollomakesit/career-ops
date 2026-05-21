@@ -61,6 +61,22 @@ test('scores compatible Python/FastAPI developer roles as solid but not support-
   assert.ok(result.missingSkills.length >= 1);
 });
 
+test('does not list skills the candidate already has as profile gaps', () => {
+  // Workspace ONE, AirWatch, Ivanti, SOTI, Android, iOS are all in the
+  // candidate profile. When the JD doesn't reprint them, they must NOT come
+  // back as "Profile gaps vs role" — that was the misleading behavior before.
+  const result = scoreJobFit({
+    title: 'Technical Support Engineer',
+    company: 'Cegeka',
+    location: 'Romania (Remote)',
+    description: 'You will work with ServiceNow tickets and Python scripts.',
+  }, {
+    ...profile,
+    skills: [...profile.skills, 'Android', 'iOS'],
+  });
+  assert.deepEqual(result.missingSkills, []);
+});
+
 test('penalizes pure sales and internship roles', () => {
   const result = scoreJobFit({
     title: 'Junior Sales Internship',

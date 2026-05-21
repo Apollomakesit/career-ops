@@ -90,9 +90,20 @@ export function createRunState({
       item.lastError = String(lastError || '');
       item.updatedAt = now().toISOString();
     }, 'progress'),
+    setQueued: (portal, queued) => mutate(current => {
+      const item = portalStateFor(current, portal, now);
+      item.queued = Math.max(0, Number(queued) || 0);
+      item.processed = 0;
+      item.updatedAt = now().toISOString();
+    }, 'progress'),
     snapshot,
     reset: () => mutate(current => {
       Object.assign(current, initialState(now));
+    }),
+    resetPortal: portal => mutate(current => {
+      current.global.cancelled = false;
+      const item = portalStateFor(current, portal, now);
+      Object.assign(item, initialPortalState(now));
     }),
     isPaused(portal) {
       state = persist ? readState(statePath) : state;
@@ -129,6 +140,8 @@ function initialPortalState(now) {
     paused: false,
     cancelled: false,
     status: 'idle',
+    queued: 0,
+    processed: 0,
     discovered: 0,
     matched: 0,
     imported: 0,

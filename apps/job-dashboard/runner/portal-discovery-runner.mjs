@@ -8,11 +8,12 @@ import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 
 import { createRunnerClient } from './api-client.mjs';
-import { describeBrowserProfile, launchBrowserContext } from './browser-profile.mjs';
+import { describeBrowserProfile, launchBrowserContext, openRunnerPage } from './browser-profile.mjs';
 import {
   buildDiscoveryBudgets,
   buildLocalMatchContext,
   markPartialDescription,
+  needsDetailRescan,
   shouldImportJob,
 } from './discovery-filter.mjs';
 import { envFromLocalConfig, loadLocalConfig } from './local-config.mjs';
@@ -35,6 +36,7 @@ const env = { ...localEnv, ...process.env };
 const dashboardUrl = env.DASHBOARD_URL || 'http://localhost:3000';
 const token = env.DASHBOARD_TOKEN || '';
 const maxJobs = Number(env.PORTAL_DISCOVERY_MAX_JOBS || 1000);
+const discoveryMode = String(env.PORTAL_DISCOVERY_MODE || 'new').trim().toLowerCase();
 const perPortalLimit = Number(env.PORTAL_DISCOVERY_KEYWORDS_PER_PORTAL || 25);
 const requestedPortals = (env.PORTAL_DISCOVERY_PORTALS || supportedPortals.join(','))
   .split(',')
@@ -48,13 +50,18 @@ const [profile, dashboardPortals] = await Promise.all([
   client.fetchProfile(),
   client.fetchPortals().catch(() => []),
 ]);
-const portalRows = normalizePortalRows(dashboardPortals.length > 0 ? dashboardPortals : defaultPortalRows)
+const portalRows = normalizePortalRows(
+  dashboardPortals.length > 0 ? dashboardPortals : defaultPortalRows,
+  { includeDisabled: discoveryMode === 'missing' },
+)
   .filter(item => requestedPortals.includes(item.portal));
-const plan = buildPortalSearchPlan({
-  keywords: keywordsFromProfile(profile),
-  portals: portalRows,
-  perPortalLimit,
-});
+const plan = discoveryMode === 'missing'
+  ? []
+  : buildPortalSearchPlan({
+      keywords: keywordsFromProfile(profile),
+      portals: portalRows,
+      perPortalLimit,
+    });
 const budgets = buildDiscoveryBudgets({
   totalMax: maxJobs,
   portals: portalRows.map(item => item.portal),
@@ -70,26 +77,39 @@ const matchContext = buildLocalMatchContext({
   ],
 });
 
-if (plan.length === 0) {
+if (portalRows.length === 0) {
+  console.log('No matching portals configured.');
+  process.exit(0);
+}
+
+if (discoveryMode !== 'missing' && plan.length === 0) {
   console.log('No portal searches configured.');
   process.exit(0);
 }
 
 const rl = createInterface({ input, output });
 const context = await launchBrowserContext(env, { stealth: portalRows.some(row => row.portal === 'hipo') });
-const page = context.pages()[0] || await context.newPage();
+const page = await openRunnerPage(context, {
+  fresh: discoveryMode === 'missing',
+  resetUrl: discoveryMode === 'missing' ? 'about:blank' : '',
+});
 const imported = [];
 const failed = [];
 
 try {
   console.log(`Using browser: ${describeBrowserProfile(env)}`);
-  console.log(`Scanning ${plan.length} portal search page(s). Target: ${budgets.totalMax} jobs total, up to ${budgets.perPortalMax} per portal.`);
+  console.log(discoveryMode === 'missing'
+    ? `Re-scanning incomplete job rows for ${portalRows.map(row => row.portal).join(', ')}.`
+    : `Scanning ${plan.length} portal search page(s). Target: ${budgets.totalMax} jobs total, up to ${budgets.perPortalMax} per portal.`);
   console.log('Playwright will open each candidate detail page and capture the full description before import when the portal exposes it.');
   console.log('You can log in, solve 2FA, or accept cookies in the visible browser when prompted.');
 
-  runState.reset();
-  const queue = [...plan];
-  while (queue.length > 0) {
+  resetProgressForPortals(portalRows.map(row => row.portal));
+  if (discoveryMode === 'missing') {
+    await rescanMissingJobDetails({ page, client, portalRows, portalStats, imported });
+  } else {
+    const queue = [...plan];
+    while (queue.length > 0) {
     const item = queue.shift();
     if (imported.length >= budgets.totalMax || allPortalBudgetsReached(portalCounts, budgets)) break;
     if (runState.isCancelled(item.portal)) {
@@ -137,8 +157,14 @@ try {
       for (const job of jobs) {
         if (imported.length >= budgets.totalMax) break;
         if (!canImportForPortal({ portal: job.portal, importedTotal: imported.length, counters: portalCounts, budgets })) break;
+        if (runState.isCancelled(job.portal)) {
+          runState.setStatus(job.portal, 'done');
+          break;
+        }
+        while (runState.isPaused(job.portal)) await delay(250);
 
         const enriched = await enrichJobWithDetail(page, job);
+        if (runState.isCancelled(job.portal)) break;
         if (enriched.authRequired) {
           incrementStat(portalStats, job.portal, 'authRequired');
           runState.incr(job.portal, 'errors');
@@ -171,6 +197,7 @@ try {
       console.log(`  ! ${item.portal} failed: ${error.message}`);
     }
   }
+  }
 } finally {
   await rl.close();
   console.log('\nDiscovery complete. Browser profile is preserved for the next run.');
@@ -184,6 +211,76 @@ try {
     for (const item of failed) console.log(`  - ${item.portal} ${item.keyword}: ${item.error}`);
   }
   await context.close();
+}
+
+async function rescanMissingJobDetails({ page, client, portalRows, portalStats, imported }) {
+  const allowed = new Set(portalRows.map(row => row.portal));
+  const existing = await client.fetchJobs({
+    incomplete: true,
+    portal: [...allowed],
+    limit: Number(env.PORTAL_DISCOVERY_RESCAN_LIMIT || 5000),
+  }).catch(() => []);
+  const queue = existing
+    .filter(job => allowed.has(String(job.portal || '').toLowerCase()))
+    .filter(needsDetailRescan);
+  const queuedByPortal = queue.reduce((counts, job) => {
+    const portal = String(job.portal || '').toLowerCase();
+    counts[portal] = (counts[portal] || 0) + 1;
+    return counts;
+  }, {});
+  for (const portal of allowed) {
+    runState.setQueued(portal, queuedByPortal[portal] || 0);
+  }
+
+  console.log(`Found ${queue.length} incomplete existing job row(s) to re-scan.`);
+  for (const job of queue) {
+    const portal = String(job.portal || '').toLowerCase();
+    if (runState.isCancelled(portal)) {
+      runState.setStatus(portal, 'done');
+      continue;
+    }
+    while (runState.isPaused(portal)) await delay(250);
+    runState.setStatus(portal, 'running');
+    runState.setLastUrl(portal, job.url);
+    runState.incr(portal, 'discovered');
+
+    try {
+      const enriched = await enrichJobWithDetail(page, job);
+      if (enriched.authRequired) {
+        incrementStat(portalStats, portal, 'authRequired');
+        runState.incr(portal, 'errors');
+        runState.setLastError(portal, enriched.authReason || 'Login required');
+        console.log(`  ! login required: ${job.company || 'Unknown'} | ${job.title}`);
+        continue;
+      }
+
+      const created = await client.createJob(enriched);
+      imported.push(created);
+      runState.incr(portal, 'matched');
+      runState.incr(portal, 'imported');
+      incrementStat(portalStats, portal, 'imported');
+      incrementStat(portalStats, portal, enriched.source?.includes(':detail') ? 'detailCaptured' : 'partialDetail');
+      console.log(`  refreshed ${portal}: ${job.company || 'Unknown'} | ${job.title}`);
+    } catch (error) {
+      runState.incr(portal, 'errors');
+      runState.setLastError(portal, error.message);
+      console.log(`  ! refresh failed: ${job.company || 'Unknown'} | ${job.title}: ${error.message}`);
+    } finally {
+      runState.incr(portal, 'processed');
+    }
+  }
+  for (const portal of allowed) {
+    if (!runState.isCancelled(portal)) runState.setStatus(portal, 'done');
+  }
+}
+
+function resetProgressForPortals(portals) {
+  const uniquePortals = [...new Set(portals)];
+  if (uniquePortals.length === supportedPortals.length && supportedPortals.every(portal => uniquePortals.includes(portal))) {
+    runState.reset();
+    return;
+  }
+  for (const portal of uniquePortals) runState.resetPortal(portal);
 }
 
 async function needsHumanIntervention(page) {

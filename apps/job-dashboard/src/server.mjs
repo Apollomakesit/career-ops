@@ -20,6 +20,14 @@ export function createDashboardServer({
   services = resolveDashboardServices(),
 } = {}) {
   return createServer(async (req, res) => {
+    if (requiresConfiguredToken(req)) {
+      writeJson(res, 503, {
+        error: 'dashboard_token_required',
+        message: 'DASHBOARD_AUTH_REQUIRED is enabled, but DASHBOARD_TOKEN is not set.',
+      });
+      return;
+    }
+
     if (requiresToken(req)) {
       writeJson(res, 401, { error: 'unauthorized' });
       return;
@@ -120,7 +128,7 @@ function serveStatic(req, res, publicRoot) {
 }
 
 async function readJsonBody(req) {
-  if (!['POST', 'PUT', 'PATCH'].includes(req.method || '')) return undefined;
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method || '')) return undefined;
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString('utf8').trim();
@@ -145,6 +153,15 @@ function requiresToken(req) {
   if (!req.url?.startsWith('/api/')) return false;
   if (req.url === '/api/health') return false;
   return req.headers.authorization !== `Bearer ${token}`;
+}
+
+function requiresConfiguredToken(req) {
+  if (!['1', 'true', 'yes'].includes(String(process.env.DASHBOARD_AUTH_REQUIRED || '').toLowerCase())) {
+    return false;
+  }
+  if (process.env.DASHBOARD_TOKEN) return false;
+  if (!req.url?.startsWith('/api/')) return false;
+  return req.url !== '/api/health';
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

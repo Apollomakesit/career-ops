@@ -85,13 +85,18 @@ export function scoreJobFit(job, profile = {}) {
 
   const category = chooseCategory(categoryScores);
   const expectedSkills = DEFAULT_EXPECTED_SKILLS[category] || [];
-  const profileSkills = Array.isArray(profile.skills) && profile.skills.length > 0
-    ? profile.skills
-    : expectedSkills;
+  const hasProfileSkills = Array.isArray(profile.skills) && profile.skills.length > 0;
+  const profileSkills = hasProfileSkills ? profile.skills : expectedSkills;
   const matchedSkills = unique(
     profileSkills.filter(skill => text.includes(normalize(skill))),
   );
-  const missingSkills = expectedSkills.filter(skill => !matchedSkills.some(match => sameSkill(match, skill)));
+  // Gaps the candidate actually has: category-expected skills that don't appear
+  // in their profile. Previously this listed expected skills missing from the
+  // JD text, which surfaced user-held skills like "Workspace ONE" as gaps
+  // whenever a posting didn't reprint them.
+  const missingSkills = hasProfileSkills
+    ? expectedSkills.filter(skill => !profileSkills.some(p => sameSkill(p, skill)))
+    : expectedSkills.filter(skill => !matchedSkills.some(match => sameSkill(match, skill)));
   const riskFlags = RISK_PATTERNS
     .filter(({ patterns }) => patterns.some(pattern => text.includes(normalize(pattern))))
     .map(({ flag }) => flag);
@@ -141,7 +146,7 @@ function recommendationFor(score) {
 function buildReasons({ category, matchedSkills, missingSkills, riskFlags, location }) {
   const reasons = [`Role category: ${category.replace('_', ' / ')}`];
   if (matchedSkills.length > 0) reasons.push(`Matched skills: ${matchedSkills.join(', ')}`);
-  if (missingSkills.length > 0) reasons.push(`Missing/unclear: ${missingSkills.join(', ')}`);
+  if (missingSkills.length > 0) reasons.push(`Profile gaps vs role: ${missingSkills.join(', ')}`);
   if (location) reasons.push(`Location: ${location}`);
   if (riskFlags.length > 0) reasons.push(`Risk flags: ${riskFlags.join(', ')}`);
   return reasons;

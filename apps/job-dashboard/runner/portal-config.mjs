@@ -60,7 +60,7 @@ export function buildPortalSearchPlan({
   return plan;
 }
 
-export function normalizePortalRows(portals = supportedPortals) {
+export function normalizePortalRows(portals = supportedPortals, { includeDisabled = false } = {}) {
   const rows = portals.length > 0 ? portals : defaultPortalRows;
   return rows
     .map(item => {
@@ -74,7 +74,7 @@ export function normalizePortalRows(portals = supportedPortals) {
       };
     })
     .filter(item => supportedPortals.includes(item.portal))
-    .filter(item => item.fieldHints?.discovery?.enabled !== false);
+    .filter(item => includeDisabled || item.fieldHints?.discovery?.enabled !== false);
 }
 
 export function searchUrlFor(portal, keyword, opts = {}) {

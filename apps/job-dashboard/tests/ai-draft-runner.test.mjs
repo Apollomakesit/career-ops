@@ -39,3 +39,33 @@ test('drafts packages locally and posts them back to the dashboard', async () =>
   assert.equal(created[0].jobId, 'job-1');
   assert.equal(created[0].payload.coverLetter, 'Ioan Stefan Vlaicu for ExampleSoft');
 });
+
+test('spaces AI draft requests when a cooldown is configured', async () => {
+  const waits = [];
+  await draftPackagesForJobs({
+    client: {
+      async fetchProfile() { return {}; },
+      async fetchJobs() {
+        return [
+          { id: 'job-1', fitScore: 90, company: 'A' },
+          { id: 'job-2', fitScore: 91, company: 'B' },
+        ];
+      },
+      async fetchPackages() { return []; },
+      async createPackage() { return {}; },
+    },
+    cooldownMs: 125,
+    wait: ms => {
+      waits.push(ms);
+      return Promise.resolve();
+    },
+    generatePackage: async () => ({
+      coverLetter: 'Letter',
+      tailoredCvMd: '# CV',
+      requiredFields: {},
+      missingFields: {},
+    }),
+  });
+
+  assert.deepEqual(waits, [125]);
+});

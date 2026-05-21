@@ -45,6 +45,17 @@ export async function launchBrowserContext(env = {}, { stealth = false } = {}) {
   }
 }
 
+export async function openRunnerPage(context, { fresh = false, resetUrl = '' } = {}) {
+  const page = fresh
+    ? await context.newPage()
+    : context.pages()[0] || await context.newPage();
+  if (resetUrl) {
+    await page.goto(resetUrl, { waitUntil: 'domcontentloaded', timeout: 5000 }).catch(() => {});
+  }
+  await page.bringToFront?.().catch(() => {});
+  return page;
+}
+
 async function stealthChromium() {
   const { chromium: chromiumStealth } = await import('playwright-extra');
   const stealth = (await import('puppeteer-extra-plugin-stealth')).default;

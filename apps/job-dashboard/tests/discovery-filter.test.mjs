@@ -5,6 +5,7 @@ import {
   buildDiscoveryBudgets,
   buildLocalMatchContext,
   markPartialDescription,
+  needsDetailRescan,
   shouldImportJob,
 } from '../runner/discovery-filter.mjs';
 
@@ -200,4 +201,23 @@ test('marks partial descriptions when detail pages cannot be read', () => {
 
   assert.match(marked.description, /^\[Partial listing capture - detail page unavailable\]/);
   assert.equal(marked.source, 'portal-discovery:ejobs:partial-detail');
+});
+
+test('identifies old or incomplete jobs that need detail re-scan', () => {
+  assert.equal(needsDetailRescan({
+    source: 'portal-discovery:ejobs:partial-detail',
+    description: '[Partial listing capture - detail page unavailable]\nRole title only',
+  }), true);
+  assert.equal(needsDetailRescan({
+    source: 'portal-discovery:ejobs',
+    description: 'Short listing card',
+  }), true);
+  assert.equal(needsDetailRescan({
+    url: 'https://example.com/complete',
+    title: 'Application Support Engineer',
+    company: 'ExampleSoft',
+    source: 'portal-discovery:ejobs:detail',
+    description: 'Detailed posting '.repeat(80),
+    cvMatchBreakdown: { requiredSkills: ['python'] },
+  }), false);
 });

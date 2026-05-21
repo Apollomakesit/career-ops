@@ -51,6 +51,57 @@ test('starts the AI fit scorer runner', () => {
   assert.equal(manager.status()['score-ai'].status, 'running');
 });
 
+test('starts discovery for a specific portal and mode through env overrides', () => {
+  const spawned = [];
+  const manager = createRunnerManager({
+    spawnImpl: (command, args, options) => {
+      spawned.push({ command, args, options });
+      return {
+        pid: 789,
+        stdout: { on() {} },
+        stderr: { on() {} },
+        on() {},
+      };
+    },
+  });
+
+  manager.start('discover', { portal: 'linkedin', mode: 'missing' });
+
+  assert.equal(spawned[0].args.at(-1), 'portal-discovery-runner.mjs');
+  assert.equal(spawned[0].options.env.PORTAL_DISCOVERY_PORTALS, 'linkedin');
+  assert.equal(spawned[0].options.env.PORTAL_DISCOVERY_MODE, 'missing');
+});
+
+test('clears inherited smoke URL env for missing-detail discovery rescans', () => {
+  const previousSmokeUrl = process.env.PORTAL_DISCOVERY_SMOKE_URL;
+  process.env.PORTAL_DISCOVERY_SMOKE_URL = 'https://example.com/smoke';
+  const spawned = [];
+  try {
+    const manager = createRunnerManager({
+      spawnImpl: (command, args, options) => {
+        spawned.push({ command, args, options });
+        return {
+          pid: 790,
+          stdout: { on() {} },
+          stderr: { on() {} },
+          on() {},
+        };
+      },
+    });
+
+    manager.start('discover', { mode: 'missing' });
+
+    assert.equal(spawned[0].options.env.PORTAL_DISCOVERY_MODE, 'missing');
+    assert.equal(spawned[0].options.env.PORTAL_DISCOVERY_SMOKE_URL, '');
+  } finally {
+    if (previousSmokeUrl === undefined) {
+      delete process.env.PORTAL_DISCOVERY_SMOKE_URL;
+    } else {
+      process.env.PORTAL_DISCOVERY_SMOKE_URL = previousSmokeUrl;
+    }
+  }
+});
+
 test('rejects unknown runner names', () => {
   const manager = createRunnerManager({ spawnImpl: () => { throw new Error('not expected'); } });
   assert.throws(() => manager.start('unknown'), /Unknown runner/);
