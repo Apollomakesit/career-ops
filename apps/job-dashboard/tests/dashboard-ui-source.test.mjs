@@ -30,3 +30,14 @@ test('job list requests one server-side page at a time', async () => {
   assert.match(source, /selected\.set\('offset', String\(\(state\.jobPage - 1\) \* state\.jobPageSize\)\)/);
   assert.doesNotMatch(source, /selected\.set\('limit', '5000'\)/);
 });
+
+test('AI scoring actions ask for confirmation before paid OpenAI requests', async () => {
+  const source = await readFile(appSource, 'utf8');
+  const singleScoreBody = source.match(/async function scoreWithAi\(jobId, button\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  const bulkScoreBody = source.match(/async function bulkAiScore\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
+
+  assert.match(singleScoreBody, /confirmAction\(\{/);
+  assert.match(singleScoreBody, /This will send 1 job to OpenAI for scoring\. Continue\?/);
+  assert.match(bulkScoreBody, /AI Score Jobs/);
+  assert.match(bulkScoreBody, /This will send \$\{ids\.length\} job\(s\) to OpenAI for scoring\. Continue\?/);
+});

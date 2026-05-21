@@ -515,6 +515,12 @@ async function generatePackage(jobId, button) {
 }
 
 async function scoreWithAi(jobId, button) {
+  const ok = await confirmAction({
+    title: 'AI Score Job',
+    message: 'This will send 1 job to OpenAI for scoring. Continue?',
+    okText: 'Score',
+  });
+  if (!ok) return;
   await withButtonLoading(button, 'Scoring...', async () => {
     await withRetry(() => api(`/api/jobs/${jobId}/fit/generate`, { method: 'POST', body: {} }));
     await loadAll();
@@ -980,8 +986,8 @@ async function bulkAiScore() {
   const ids = selectedJobIds();
   if (ids.length === 0) return;
   const ok = await confirmAction({
-    title: 'AI score selected jobs',
-    message: `Run AI scoring for ${ids.length} selected job(s)?`,
+    title: 'AI Score Jobs',
+    message: `This will send ${ids.length} job(s) to OpenAI for scoring. Continue?`,
     okText: 'Score',
   });
   if (!ok) return;
