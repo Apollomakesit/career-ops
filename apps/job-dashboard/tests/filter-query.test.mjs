@@ -11,6 +11,6 @@ test('sanitizeSearchQuery drops dashboard URLs and autofilled emails', () => {
 });
 
 test('jobFilterQueryString keeps real filters but excludes URL-shaped search text', () => {
-  const query = jobFilterQueryString('?workModel=remote&status=applied&q=http%3A%2F%2F127.0.0.1%3A3000&minMatch=75');
-  assert.equal(query, '?workModel=remote&status=applied&minMatch=75');
+  const query = jobFilterQueryString('?workModel=remote&status=applied&sort=fit_score&dir=desc&q=http%3A%2F%2F127.0.0.1%3A3000&minMatch=75');
+  assert.equal(query, '?workModel=remote&status=applied&sort=fit_score&dir=desc&minMatch=75');
 });

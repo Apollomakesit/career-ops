@@ -53,6 +53,7 @@ document.querySelectorAll('.nav-button').forEach(button => {
     document.querySelectorAll('.view').forEach(item => item.classList.remove('active'));
     button.classList.add('active');
     target.classList.add('active');
+    if (button.dataset.view === 'activity') refreshActivityEvents();
   });
 });
 
@@ -117,6 +118,7 @@ await loadRunnerProgress();
 connectRunnerEvents();
 setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
 setInterval(() => loadRunnerProgress(), 2000);
+setInterval(refreshActivityEvents, 10000);
 
 async function init() {
   showSkeletons();
@@ -250,7 +252,7 @@ function currentJobsPage() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(1, Number(state.jobPage) || 1), totalPages);
   const offset = (page - 1) * pageSize;
-  const items = sortedJobs(state.jobs);
+  const items = state.jobs;
   return {
     items,
     page,
@@ -352,7 +354,7 @@ function renderPortals() {
       </div>
       <div class="form-grid compact">
         <label>Enabled<input data-portal-enabled type="checkbox" ${discovery.enabled === false ? '' : 'checked'}></label>
-        <label>Login email<input data-portal-email value="${escapeHtml(portal.usernameEmail || '')}"></label>
+        <label>Login email<input data-portal-email type="email" autocomplete="username" value="${escapeHtml(portal.usernameEmail || '')}"></label>
         <label class="wide">Profile URL<input data-portal-profile value="${escapeHtml(portal.profileUrl || '')}"></label>
         <label class="wide">Discovery keywords<textarea data-portal-keywords>${escapeHtml((discovery.keywords || []).join('\n'))}</textarea></label>
         <label class="wide">Field hints JSON<textarea data-portal-hints>${escapeHtml(JSON.stringify({ ...hints, discovery: undefined }, null, 2))}</textarea></label>
@@ -369,6 +371,113 @@ function renderPortals() {
 }
 
 function renderPackages() {
+  document.getElementById('packagesList').innerHTML = state.packages.map(renderPackageReviewCard).join('')
+    || '<div class="item"><h3>No packages yet</h3><p>Create a draft from an application row.</p></div>';
+
+  document.querySelectorAll('[data-approve]').forEach(button => {
+    button.addEventListener('click', async () => {
+      await api(`/api/packages/${button.dataset.approve}/approve`, { method: 'POST' });
+      await loadAll();
+    });
+  });
+  document.querySelectorAll('[data-copy-cover-letter]').forEach(button => {
+    button.addEventListener('click', () => copyPackageCoverLetter(button.dataset.copyCoverLetter, button));
+  });
+}
+
+function renderPackageReviewCard(pkg) {
+  const job = packageJobForReview(pkg);
+  const cvBreakdown = pkg.cvMatchBreakdown || job.cvMatchBreakdown || {};
+  return `
+    <article class="item package-review-card">
+      <div class="item-head">
+        <div>
+          <h3>${escapeHtml(pkg.company || job.company || 'Application package')} - ${escapeHtml(pkg.title || job.title || '')}</h3>
+          <p class="muted">${escapeHtml(portalLabel(pkg.portal || job.portal || ''))}${pkg.location || job.location ? ` - ${escapeHtml(pkg.location || job.location)}` : ''}</p>
+        </div>
+        <div class="package-review-meta">
+          ${badge(pkg.approvalState || 'draft')}
+          ${badge(pkg.runnerStatus || 'not_started')}
+        </div>
+      </div>
+      <div class="package-review-grid">
+        <section class="package-review-section">
+          <h4>Fit score breakdown</h4>
+          <dl class="mini-kv">
+            <div><dt>AI fit</dt><dd>${formatPercent(job.fitScore)}</dd></div>
+            <div><dt>CV match</dt><dd>${formatPercent(job.cvMatchScore)}</dd></div>
+            <div><dt>Recommendation</dt><dd>${escapeHtml(job.recommendation || 'review')}</dd></div>
+            <div><dt>Job status</dt><dd>${escapeHtml(pkg.jobStatus || job.status || 'discovered')}</dd></div>
+          </dl>
+          ${renderBreakdown(cvBreakdown)}
+          ${renderCvScoreNotes(cvBreakdown)}
+          <div class="evidence-block">
+            <strong>Matched by AI</strong>
+            ${renderTags(job.matchedSkills, 'tag-good')}
+          </div>
+          <div class="evidence-block">
+            <strong>Missing by AI</strong>
+            ${renderTags(job.missingSkills, 'tag-bad')}
+          </div>
+        </section>
+        <section class="package-review-section">
+          <div class="review-draft-columns">
+            <div>
+              <div class="copy-row">
+                <h4>Draft cover letter</h4>
+                <button class="secondary-button" data-copy-cover-letter="${escapeHtml(pkg.id)}" ${pkg.coverLetter ? '' : 'disabled'}>Copy</button>
+              </div>
+              <div class="package-scroll cover-letter-text">${escapeHtml(pkg.coverLetter || 'No cover letter text returned yet.')}</div>
+            </div>
+            <div>
+              <h4>Tailored CV excerpt</h4>
+              <div class="package-scroll markdown-preview">${markdown(pkg.tailoredCvMd || 'No tailored CV excerpt returned yet.')}</div>
+            </div>
+          </div>
+          <div class="package-fields-grid">
+            <div class="field-block">
+              <strong>Required fields (${fieldCount(pkg.requiredFields)})</strong>
+              ${renderKeyValues(pkg.requiredFields)}
+            </div>
+            <div class="field-block">
+              <strong>Missing fields (${fieldCount(pkg.missingFields)})</strong>
+              ${renderKeyValues(pkg.missingFields)}
+            </div>
+          </div>
+          <div class="dialog-actions">
+            ${pkg.jobUrl ? `<a class="secondary-button action-link" href="${escapeHtml(pkg.jobUrl)}" target="_blank" rel="noopener">Open job</a>` : ''}
+            <button class="primary-button" data-approve="${escapeHtml(pkg.id)}" ${pkg.approvalState === 'approved' ? 'disabled' : ''}>Approve</button>
+          </div>
+        </section>
+      </div>
+    </article>
+  `;
+}
+
+function packageJobForReview(pkg = {}) {
+  const pageJob = state.jobs.find(job => String(job.id) === String(pkg.jobId)) || {};
+  return { ...pageJob, ...pkg };
+}
+
+function fieldCount(value) {
+  return Object.keys(value || {}).length;
+}
+
+function formatPercent(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? `${Math.round(number)}%` : 'Not scored';
+}
+
+async function copyPackageCoverLetter(packageId, button) {
+  const pkg = state.packages.find(item => String(item.id) === String(packageId));
+  if (!pkg?.coverLetter) return;
+  await withButtonLoading(button, 'Copying...', async () => {
+    await copyText(pkg.coverLetter);
+    showToast('Cover letter copied.', 'success');
+  });
+}
+
+function renderPackagesLegacy() {
   document.getElementById('packagesList').innerHTML = state.packages.map(pkg => `
     <div class="item">
       <h3>${escapeHtml(pkg.company || 'Application package')} - ${escapeHtml(pkg.title || '')}</h3>
@@ -426,6 +535,37 @@ function renderEvents() {
   `).join('') || '<div class="item"><h3>No activity yet</h3><p>Dashboard events will appear here.</p></div>';
 }
 
+async function refreshActivityEvents() {
+  if (!isActivityViewVisible()) return;
+  try {
+    const events = await api(`/api/events?since=${encodeURIComponent(lastActivityEventTimestamp())}`);
+    if (!Array.isArray(events) || events.length === 0) return;
+    mergeActivityEvents(events);
+    renderEvents();
+  } catch {
+    // Keep background polling quiet; manual refresh still reports errors.
+  }
+}
+
+function isActivityViewVisible() {
+  return document.getElementById('activity')?.classList.contains('active');
+}
+
+function lastActivityEventTimestamp() {
+  const times = state.events
+    .map(event => Date.parse(event.createdAt || ''))
+    .filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : '';
+}
+
+function mergeActivityEvents(events = []) {
+  const merged = new Map(state.events.map(event => [activityEventKey(event), event]));
+  for (const event of events) merged.set(activityEventKey(event), event);
+  state.events = [...merged.values()].sort((left, right) => (
+    (Date.parse(right.createdAt || '') || 0) - (Date.parse(left.createdAt || '') || 0)
+  ));
+}
+
 function renderCv() {
   document.getElementById('cvEditor').value = state.cvMarkdown || '';
   renderCvPreview();
@@ -439,6 +579,7 @@ async function showJobDetails(jobId) {
   document.getElementById('jobDetailsMeta').textContent = [job.company, portalLabel(job.portal), job.location, job.workModel].filter(Boolean).join(' - ');
   document.getElementById('jobDetailsBody').innerHTML = `
     <section class="details-grid">
+      ${renderJobEditForm(job)}
       <article>
         <h3>CV Match</h3>
         <div class="score-large ${scoreClass(job.cvMatchScore)}">${job.cvMatchScore || 0}%</div>
@@ -490,9 +631,66 @@ async function showJobDetails(jobId) {
   document.querySelectorAll('.detail-ai-button').forEach(button => {
     button.addEventListener('click', () => scoreWithAi(button.dataset.scoreAiJob, button));
   });
+  bindJobEditButtons();
   bindDetailPackageButtons();
   const dialog = document.getElementById('jobDetailsDialog');
   if (!dialog.open) dialog.showModal();
+}
+
+function renderJobEditForm(job) {
+  return `
+    <article class="job-edit-panel" data-job-edit-form="${escapeHtml(job.id)}">
+      <h3>Edit job</h3>
+      <div class="form-grid compact">
+        <label>Title<input data-job-edit-field="title" value="${escapeHtml(job.title || '')}"></label>
+        <label>Company<input data-job-edit-field="company" value="${escapeHtml(job.company || '')}"></label>
+        <label>Location<input data-job-edit-field="location" value="${escapeHtml(job.location || '')}"></label>
+        <label>Status<select data-job-edit-field="status">${jobStatusOptions(job.status)}</select></label>
+        <label class="wide">URL<input data-job-edit-field="url" value="${escapeHtml(job.url || '')}"></label>
+        <label class="wide">Notes<textarea data-job-edit-field="notes">${escapeHtml(job.notes || '')}</textarea></label>
+      </div>
+      <div class="dialog-actions">
+        <button class="primary-button" data-save-job-edit="${escapeHtml(job.id)}" type="button">Save changes</button>
+      </div>
+    </article>
+  `;
+}
+
+function jobStatusOptions(current) {
+  const statuses = [
+    ['discovered', 'New'],
+    ['reviewed', 'Reviewed'],
+    ['approved', 'Approved'],
+    ['applied', 'Applied'],
+    ['rejected', 'Rejected'],
+    ['discarded', 'Discarded'],
+  ];
+  const selected = String(current || 'discovered');
+  return statuses.map(([value, label]) => (
+    `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`
+  )).join('');
+}
+
+function bindJobEditButtons() {
+  document.querySelectorAll('[data-save-job-edit]').forEach(button => {
+    button.addEventListener('click', () => saveJobEdit(button.dataset.saveJobEdit, button));
+  });
+}
+
+async function saveJobEdit(jobId, button) {
+  const form = [...document.querySelectorAll('[data-job-edit-form]')]
+    .find(element => String(element.dataset.jobEditForm) === String(jobId));
+  if (!form) return;
+  const updates = Object.fromEntries([...form.querySelectorAll('[data-job-edit-field]')]
+    .map(field => [field.dataset.jobEditField, field.value.trim()]));
+  await withButtonLoading(button, 'Saving...', async () => {
+    const updated = await api(`/api/jobs/${jobId}`, { method: 'PATCH', body: updates });
+    const index = state.jobs.findIndex(job => String(job.id) === String(jobId));
+    if (index >= 0) state.jobs.splice(index, 1, updated);
+    await loadAll();
+    await showJobDetails(jobId);
+    showToast('Job updated.', 'success');
+  });
 }
 
 function renderJobPackageCard(job, pkg = packageForJob(job.id)) {
@@ -550,7 +748,7 @@ async function createJob(event) {
     await api('/api/jobs', {
       method: 'POST',
       body: {
-        url: value('jobUrl') || `manual:${Date.now()}`,
+        url: value('jobUrl'),
         company: value('jobCompany'),
         title: value('jobTitle'),
         portal: value('jobPortal'),
@@ -1306,6 +1504,22 @@ function downloadText(filename, text, type = 'text/plain') {
   URL.revokeObjectURL(url);
 }
 
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
+
 function toggleTheme() {
   state.theme = nextTheme(state.theme);
   localStorage.setItem('careerOpsTheme', state.theme);
@@ -1426,23 +1640,14 @@ function renderCvScoreNotes(breakdown = {}) {
   return notes.length > 0 ? `<div class="score-notes">${renderList(notes)}</div>` : '';
 }
 
-function sortedJobs(jobs) {
-  const { key, direction } = state.sort;
-  const sign = direction === 'asc' ? 1 : -1;
-  return [...jobs].sort((a, b) => {
-    const av = a[key] ?? '';
-    const bv = b[key] ?? '';
-    if (typeof av === 'number' || typeof bv === 'number') return (Number(av || 0) - Number(bv || 0)) * sign;
-    return String(av).localeCompare(String(bv)) * sign;
-  });
-}
-
-function sortJobs(key) {
+async function sortJobs(key) {
   state.sort = {
     key,
     direction: state.sort.key === key && state.sort.direction === 'desc' ? 'asc' : 'desc',
   };
-  renderJobs();
+  state.jobPage = 1;
+  updateLocationQuery();
+  await loadAll();
 }
 
 async function applyFilters() {
@@ -1455,6 +1660,8 @@ function jobsQueryString() {
   const selected = new URLSearchParams(jobFilterQueryString(window.location.search).replace(/^\?/, ''));
   selected.set('limit', String(state.jobPageSize));
   selected.set('offset', String((state.jobPage - 1) * state.jobPageSize));
+  selected.set('sort', sortColumnForKey(state.sort.key));
+  selected.set('dir', state.sort.direction);
   const text = selected.toString();
   return text ? `?${text}` : '';
 }
@@ -1469,6 +1676,8 @@ function updateLocationQuery() {
   setParam(params, 'currency', value('filterCurrency'));
   setParam(params, 'postedWithinDays', value('filterPostedWithin'));
   setParam(params, 'minMatch', value('filterMinMatch') === '0' ? '' : value('filterMinMatch'));
+  setParam(params, 'sort', sortColumnForKey(state.sort.key));
+  setParam(params, 'dir', state.sort.direction);
   const rawSearch = value('filterSearch');
   const cleanSearch = sanitizeSearchQuery(rawSearch);
   if (cleanSearch !== rawSearch) setValue('filterSearch', cleanSearch);
@@ -1493,6 +1702,10 @@ function hydrateFiltersFromLocation() {
   setValue('filterCurrency', params.get('currency') || '');
   setValue('filterPostedWithin', params.get('postedWithinDays') || '');
   setValue('filterMinMatch', params.get('minMatch') || '0');
+  state.sort = {
+    key: sortKeyForColumn(params.get('sort') || state.sort.key),
+    direction: sortDirection(params.get('dir') || state.sort.direction),
+  };
   // Browsers can autofill search boxes with account emails or the current URL.
   // Those values hide every job, so keep only real title/description searches.
   const rawQ = params.get('q') || '';
@@ -1530,6 +1743,41 @@ function setSelectedValues(id, values) {
 function setParam(params, key, value) {
   if (value) params.set(key, value);
   else params.delete(key);
+}
+
+function sortColumnForKey(key) {
+  return {
+    cvMatchScore: 'cv_match_score',
+    fitScore: 'fit_score',
+    title: 'title',
+    company: 'company',
+    workModel: 'work_model',
+    salaryMin: 'salary_min',
+    postedDate: 'posted_date',
+    status: 'status',
+  }[key] || 'cv_match_score';
+}
+
+function sortKeyForColumn(column) {
+  return {
+    cv_match_score: 'cvMatchScore',
+    cvMatchScore: 'cvMatchScore',
+    fit_score: 'fitScore',
+    fitScore: 'fitScore',
+    title: 'title',
+    company: 'company',
+    work_model: 'workModel',
+    workModel: 'workModel',
+    salary_min: 'salaryMin',
+    salaryMin: 'salaryMin',
+    posted_date: 'postedDate',
+    postedDate: 'postedDate',
+    status: 'status',
+  }[column] || 'cvMatchScore';
+}
+
+function sortDirection(value) {
+  return String(value || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
 }
 
 function formatSalary(job) {
@@ -1809,6 +2057,10 @@ function scoreClass(score) {
 
 function stringItems(items = []) {
   return Array.isArray(items) ? items.filter(Boolean).map(item => String(item)) : [];
+}
+
+function activityEventKey(event = {}) {
+  return event.id || [event.createdAt, event.eventType, event.message].map(item => String(item || '')).join('|');
 }
 
 function normalizeDisplay(value) {

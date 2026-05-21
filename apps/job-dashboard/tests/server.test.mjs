@@ -177,7 +177,9 @@ test('explicit AI env configuration wins over local runner config', () => {
 test('server startup waits for database connectivity before migrations', async () => {
   const source = await readFile(new URL('../src/server.mjs', import.meta.url), 'utf8');
 
-  assert.match(source, /import \{ createPool, waitForDatabase \} from '\.\/db\.mjs';/);
+  assert.match(source, /import \{ createPool, ensureSqliteAvailable, waitForDatabase \} from '\.\/db\.mjs';/);
+  assert.match(source, /ensureSqliteAvailable\(\);/);
+  assert.match(source, /console\.error\(`ERROR: \$\{error\.message\}`\);\s+process\.exit\(1\);/);
   assert.match(source, /const pool = createPool\(\);\s+await waitForDatabase\(pool\);\s+await migrate\(pool\);/);
 });
 

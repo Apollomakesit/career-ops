@@ -21,6 +21,18 @@ export function createPool(connectionString = process.env.DATABASE_URL) {
   return createSqlitePool(process.env.SQLITE_PATH || defaultSqlitePath);
 }
 
+export function ensureSqliteAvailable({
+  env = process.env,
+  loadSqlite = loadBetterSqlite3,
+} = {}) {
+  if (env.DATABASE_URL) return;
+  try {
+    loadSqlite();
+  } catch (error) {
+    throw sqliteUnavailableError(error);
+  }
+}
+
 export async function waitForDatabase(pool, {
   attempts = 5,
   baseDelayMs = 1000,
@@ -72,6 +84,19 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function loadBetterSqlite3() {
+  const require = createRequire(import.meta.url);
+  return require('better-sqlite3');
+}
+
+function sqliteUnavailableError(error) {
+  return new Error(
+    'better-sqlite3 unavailable. Install build tools or set DATABASE_URL. '
+    + 'For local SQLite mode, run "npm install" in apps/job-dashboard after installing native build tools. '
+    + `(${error.message})`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // SQLite pool — a minimal adapter exposing the same surface routes.mjs expects
 // from a pg pool: an async query(text, params) returning { rows }.
@@ -83,16 +108,11 @@ function createSqlitePool(filePath) {
   // Lazy require so environments using Postgres never need the native module.
   // better-sqlite3 is an optionalDependency: present locally, skipped on hosts
   // (e.g. Railway) that run against Postgres instead.
-  const require = createRequire(import.meta.url);
   let Database;
   try {
-    Database = require('better-sqlite3');
+    Database = loadBetterSqlite3();
   } catch (error) {
-    throw new Error(
-      'Local SQLite mode needs the better-sqlite3 package. Run "npm install" in '
-      + 'apps/job-dashboard, or set DATABASE_URL to use Postgres instead. '
-      + `(${error.message})`,
-    );
+    throw sqliteUnavailableError(error);
   }
   const db = new Database(filePath);
   db.pragma('journal_mode = WAL');

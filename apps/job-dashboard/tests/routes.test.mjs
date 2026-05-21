@@ -56,8 +56,14 @@ function createStore() {
     },
     async listJobDetails(id) { return state.jobs.find(job => job.id === id) || null; },
     async getJob(id) { return state.jobs.find(job => job.id === id) || null; },
+    async getJobByUrl(url) { return state.jobs.find(job => job.url === url) || null; },
     async createJob(job) {
-      const created = { id: 'job-1', ...job };
+      const existing = state.jobs.find(item => item.url && item.url === job.url);
+      if (existing) {
+        Object.assign(existing, job);
+        return existing;
+      }
+      const created = { id: `job-${state.jobs.length + 1}`, ...job };
       state.jobs.push(created);
       return created;
     },
@@ -147,7 +153,10 @@ function createStore() {
       Object.assign(command, payload);
       return command;
     },
-    async listEvents() { return state.events; },
+    async listEvents(filters = {}) {
+      state.lastEventFilters = filters;
+      return state.events;
+    },
     async rescoreCvMatches() { return { updated: state.jobs.length }; },
   };
 }
@@ -279,6 +288,27 @@ test('creates a job with fit scoring', async () => {
   assert.equal(typeof response.body.cvMatch.score, 'number');
 });
 
+test('manual job creation returns a duplicate conflict for the same company and title', async () => {
+  const store = createStore();
+  const first = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { company: 'ExampleSoft', title: 'Support Engineer' },
+  }, store);
+  const duplicate = await dispatchApi({
+    method: 'POST',
+    url: '/api/jobs',
+    body: { company: ' examplesoft ', title: ' support engineer ' },
+  }, store);
+
+  assert.equal(first.status, 201);
+  assert.match(first.body.url, /^manual:/);
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.error, 'duplicate_job');
+  assert.equal(duplicate.body.job.id, first.body.id);
+  assert.equal(store.state.jobs.length, 1);
+});
+
 test('returns expanded job detail fields', async () => {
   const store = createStore();
   store.state.jobs.push({
@@ -324,6 +354,7 @@ test('updates editable job fields without accepting unrelated keys', async () =>
       location: 'Bucharest',
       status: 'reviewed',
       notes: 'Promising role.',
+      url: 'https://example.com/new-role',
       fitScore: 1,
     },
   }, store);
@@ -331,6 +362,7 @@ test('updates editable job fields without accepting unrelated keys', async () =>
   assert.equal(response.status, 200);
   assert.equal(response.body.title, 'Senior Support Engineer');
   assert.equal(response.body.company, 'NewCo');
+  assert.equal(response.body.url, 'https://example.com/new-role');
   assert.equal(response.body.notes, 'Promising role.');
   assert.equal(response.body.fitScore, undefined);
 });
@@ -374,6 +406,22 @@ test('updates and deletes jobs in bulk', async () => {
   assert.deepEqual(store.state.jobs.map(job => job.id), ['job-2']);
 });
 
+test('passes activity event cursors to the store', async () => {
+  const store = createStore();
+  store.state.events = [
+    { id: 'evt-2', createdAt: '2026-05-21T12:05:00Z' },
+  ];
+
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/events?since=2026-05-21T12%3A00%3A00.000Z',
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.length, 1);
+  assert.equal(store.state.lastEventFilters.since, '2026-05-21T12:00:00.000Z');
+});
+
 test('returns job totals by portal and incomplete data counts', async () => {
   const store = createStore();
   store.state.jobs.push(
@@ -404,7 +452,7 @@ test('passes incomplete job paging filters to the store', async () => {
 
   const response = await dispatchApi({
     method: 'GET',
-    url: '/api/jobs?incomplete=1&limit=5000&portal=linkedin,ejobs&status=applied',
+    url: '/api/jobs?incomplete=1&limit=5000&portal=linkedin,ejobs&status=applied&sort=fit_score&dir=desc',
   }, store);
 
   assert.equal(response.status, 200);
@@ -412,6 +460,8 @@ test('passes incomplete job paging filters to the store', async () => {
   assert.equal(seenFilters.limit, 200);
   assert.deepEqual(seenFilters.portal, ['linkedin', 'ejobs']);
   assert.equal(seenFilters.status, 'applied');
+  assert.equal(seenFilters.sort, 'fit_score');
+  assert.equal(seenFilters.dir, 'desc');
 });
 
 test('paginates job listings with total metadata', async () => {

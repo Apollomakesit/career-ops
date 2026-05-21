@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { waitForDatabase } from '../src/db.mjs';
+import { ensureSqliteAvailable, waitForDatabase } from '../src/db.mjs';
 
 test('waitForDatabase retries transient startup connection failures', async () => {
   let calls = 0;
@@ -46,4 +46,30 @@ test('waitForDatabase throws after the final failed startup attempt', async () =
   );
   assert.equal(calls, 3);
   assert.deepEqual(delays, [5, 10]);
+});
+
+test('ensureSqliteAvailable skips local native checks when Postgres is configured', () => {
+  let checked = false;
+
+  ensureSqliteAvailable({
+    env: { DATABASE_URL: 'postgresql://example/db' },
+    loadSqlite() {
+      checked = true;
+      throw new Error('should not load sqlite');
+    },
+  });
+
+  assert.equal(checked, false);
+});
+
+test('ensureSqliteAvailable explains how to fix missing local SQLite support', () => {
+  assert.throws(
+    () => ensureSqliteAvailable({
+      env: { DATABASE_URL: '' },
+      loadSqlite() {
+        throw new Error('No native build tools');
+      },
+    }),
+    /better-sqlite3 unavailable\. Install build tools or set DATABASE_URL.*No native build tools/,
+  );
 });

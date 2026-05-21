@@ -66,6 +66,17 @@ test('createJob upserts on duplicate url', async () => {
   assert.equal(list[0].title, 'Second');
 });
 
+test('manual createJob uses a stable company and title dedup key', async () => {
+  const store = await freshStore();
+  const first = await store.createJob({ company: 'ExampleSoft', title: 'Support Engineer', fit: sampleFit });
+  const second = await store.createJob({ company: ' examplesoft ', title: ' support engineer ', fit: sampleFit });
+  const list = await store.listJobs();
+
+  assert.match(first.url, /^manual:/);
+  assert.equal(second.id, first.id);
+  assert.equal(list.length, 1);
+});
+
 test('updateJob changes editable fields and persists notes', async () => {
   const store = await freshStore();
   const created = await store.createJob({
@@ -78,6 +89,7 @@ test('updateJob changes editable fields and persists notes', async () => {
   });
 
   const updated = await store.updateJob(created.id, {
+    url: 'https://example.com/job/editable-updated',
     title: 'Updated title',
     company: 'UpdatedCo',
     location: 'Bucharest',
@@ -87,6 +99,7 @@ test('updateJob changes editable fields and persists notes', async () => {
   const fetched = await store.getJob(created.id);
 
   assert.equal(updated.title, 'Updated title');
+  assert.equal(updated.url, 'https://example.com/job/editable-updated');
   assert.equal(updated.company, 'UpdatedCo');
   assert.equal(fetched.location, 'Bucharest');
   assert.equal(fetched.status, 'reviewed');
@@ -188,6 +201,24 @@ test('listJobs and countJobs can filter by application status', async () => {
   assert.equal(appliedTotal, 1);
 });
 
+test('listJobs can sort jobs server-side by fit score', async () => {
+  const store = await freshStore();
+  await store.createJob({
+    url: 'https://example.com/job/fit-low',
+    title: 'Low Fit',
+    fit: { ...sampleFit, score: 42 },
+  });
+  await store.createJob({
+    url: 'https://example.com/job/fit-high',
+    title: 'High Fit',
+    fit: { ...sampleFit, score: 94 },
+  });
+
+  const byFit = await store.listJobs({ sort: 'fit_score', dir: 'asc' });
+
+  assert.deepEqual(byFit.map(job => job.title), ['Low Fit', 'High Fit']);
+});
+
 test('job CV match stores rich breakdown evidence', async () => {
   const store = await freshStore();
   const created = await store.createJob({
@@ -254,6 +285,8 @@ test('packages create, approve, and report runner status', async () => {
   assert.equal(list.length, 1);
   assert.equal(list[0].company, '');
   assert.equal(list[0].title, 'Role');
+  assert.equal(list[0].fitScore, sampleFit.score);
+  assert.deepEqual(list[0].matchedSkills, sampleFit.matchedSkills);
 });
 
 test('packages are upserted per job instead of duplicated', async () => {
@@ -309,6 +342,15 @@ test('runner state stores desired config and events accumulate', async () => {
   const events = await store.listEvents();
   assert.ok(events.length > 0);
   assert.ok(events.every(event => typeof event.eventType === 'string'));
+});
+
+test('listEvents can return only events newer than a cursor', async () => {
+  const store = await freshStore();
+  await store.updateRunnerDesiredConfig({ aiModel: 'claude-haiku-4-5' });
+
+  const futureEvents = await store.listEvents({ since: '2999-01-01T00:00:00.000Z' });
+
+  assert.deepEqual(futureEvents, []);
 });
 
 test('runner desired config updates preserve nested sibling settings', async () => {
