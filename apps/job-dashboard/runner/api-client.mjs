@@ -11,7 +11,8 @@ export function createRunnerClient({ baseUrl, token = '', fetchImpl = fetch }) {
     },
 
     async fetchJobs(filters = {}) {
-      return request(`${root}/api/jobs${queryString(filters)}`, { token, fetchImpl });
+      const payload = await request(`${root}/api/jobs${queryString(filters)}`, { token, fetchImpl });
+      return Array.isArray(payload) ? payload : (payload.jobs || []);
     },
 
     async fetchPackages() {
@@ -116,6 +117,7 @@ function queryString(filters = {}) {
   const params = new URLSearchParams();
   if (filters.incomplete) params.set('incomplete', '1');
   if (filters.limit != null) params.set('limit', String(filters.limit));
+  if (filters.offset != null) params.set('offset', String(filters.offset));
   if (filters.portal) {
     const portals = Array.isArray(filters.portal) ? filters.portal : [filters.portal];
     const value = portals.map(item => String(item || '').trim()).filter(Boolean).join(',');

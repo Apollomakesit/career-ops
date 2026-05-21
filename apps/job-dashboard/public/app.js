@@ -29,6 +29,8 @@ const state = {
   sort: { key: 'cvMatchScore', direction: 'desc' },
   jobPage: 1,
   jobPageSize: DEFAULT_JOB_PAGE_SIZE,
+  jobTotal: 0,
+  jobOffset: 0,
   selectedJobIds: new Set(),
   activityFilters: {},
   theme: localStorage.getItem('careerOpsTheme') || 'light',
@@ -117,7 +119,7 @@ setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
 setInterval(() => loadRunnerProgress(), 2000);
 
 async function loadAll() {
-  const [profile, portals, jobs, jobStats, packagesList, events, cv] = await Promise.all([
+  const [profile, portals, jobsResponse, jobStats, packagesList, events, cv] = await Promise.all([
     api('/api/profile'),
     api('/api/portals'),
     api(`/api/jobs${jobsQueryString()}`),
@@ -126,7 +128,19 @@ async function loadAll() {
     api('/api/events'),
     api('/api/cv').catch(() => ({ markdown: 'CV view is waiting for the dashboard API to reload. The canonical file is cv.md in the project root.' })),
   ]);
-  Object.assign(state, { profile, portals, jobs, jobStats, packages: packagesList, events, cvMarkdown: cv.markdown || '' });
+  const jobsPage = normalizeJobsResponse(jobsResponse);
+  Object.assign(state, {
+    profile,
+    portals,
+    jobs: jobsPage.jobs,
+    jobTotal: jobsPage.total,
+    jobOffset: jobsPage.offset,
+    jobPageSize: jobsPage.limit || state.jobPageSize,
+    jobStats,
+    packages: packagesList,
+    events,
+    cvMarkdown: cv.markdown || '',
+  });
   renderJobs();
   renderProfile();
   renderPortals();
@@ -136,12 +150,45 @@ async function loadAll() {
   renderJobStats();
 }
 
+function normalizeJobsResponse(jobsResponse) {
+  if (Array.isArray(jobsResponse)) {
+    return {
+      jobs: jobsResponse,
+      limit: state.jobPageSize,
+      offset: 0,
+      total: jobsResponse.length,
+    };
+  }
+  const jobs = Array.isArray(jobsResponse?.jobs) ? jobsResponse.jobs : [];
+  return {
+    jobs,
+    limit: Number(jobsResponse?.limit) || state.jobPageSize,
+    offset: Number(jobsResponse?.offset) || 0,
+    total: Number(jobsResponse?.total ?? jobs.length),
+  };
+}
+
+function currentJobsPage() {
+  const pageSize = Math.max(1, Number(state.jobPageSize) || DEFAULT_JOB_PAGE_SIZE);
+  const total = Math.max(0, Number(state.jobTotal) || 0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Number(state.jobPage) || 1), totalPages);
+  const offset = (page - 1) * pageSize;
+  const items = sortedJobs(state.jobs);
+  return {
+    items,
+    page,
+    pageSize,
+    total,
+    totalPages,
+    start: total === 0 ? 0 : offset + 1,
+    end: Math.min(offset + items.length, total),
+  };
+}
+
 function renderJobs() {
   const target = document.getElementById('jobsTable');
-  const page = paginateItems(sortedJobs(state.jobs), {
-    page: state.jobPage,
-    pageSize: state.jobPageSize,
-  });
+  const page = currentJobsPage();
   state.jobPage = page.page;
   const visibleIds = page.items.map(job => String(job.id));
   const rows = page.items.map(job => {
@@ -915,14 +962,11 @@ function renderJobsPagination(page) {
 function setJobPage(page) {
   state.jobPage = Math.max(1, Number(page) || 1);
   updatePageParam();
-  renderJobs();
+  loadAll();
 }
 
 function selectVisibleJobs() {
-  const page = paginateItems(sortedJobs(state.jobs), {
-    page: state.jobPage,
-    pageSize: state.jobPageSize,
-  });
+  const page = currentJobsPage();
   state.selectedJobIds = nextBulkSelection(state.selectedJobIds, page.items.map(job => job.id), 'select-visible');
   renderJobs();
 }
@@ -1327,7 +1371,8 @@ async function applyFilters() {
 
 function jobsQueryString() {
   const selected = new URLSearchParams(jobFilterQueryString(window.location.search).replace(/^\?/, ''));
-  selected.set('limit', '5000');
+  selected.set('limit', String(state.jobPageSize));
+  selected.set('offset', String((state.jobPage - 1) * state.jobPageSize));
   const text = selected.toString();
   return text ? `?${text}` : '';
 }

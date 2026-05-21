@@ -124,6 +124,22 @@ test('fetches portal configuration and creates AI-generated packages', async () 
   assert.equal(calls[2].options.method, 'POST');
 });
 
+test('fetchJobs unwraps paginated dashboard responses for runners', async () => {
+  const client = createRunnerClient({
+    baseUrl: 'https://dashboard.example/',
+    fetchImpl: async () => jsonResponse({
+      jobs: [{ id: 'job-1' }, { id: 'job-2' }],
+      limit: 50,
+      offset: 0,
+      total: 2,
+    }),
+  });
+
+  const jobs = await client.fetchJobs();
+
+  assert.deepEqual(jobs.map(job => job.id), ['job-1', 'job-2']);
+});
+
 function jsonResponse(body) {
   return {
     ok: true,

@@ -33,7 +33,12 @@ function createStore() {
       state.portals = state.portals.filter(item => item.portal !== portal.portal).concat(portal);
       return portal;
     },
-    async listJobs() { return state.jobs; },
+    async listJobs(filters = {}) {
+      const offset = Number(filters.offset || 0);
+      const limit = Number(filters.limit || state.jobs.length || 50);
+      return state.jobs.slice(offset, offset + limit);
+    },
+    async countJobs() { return state.jobs.length; },
     async listJobStats() {
       const byPortal = {};
       let incomplete = 0;
@@ -404,8 +409,28 @@ test('passes incomplete job paging filters to the store', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(seenFilters.incomplete, true);
-  assert.equal(seenFilters.limit, 5000);
+  assert.equal(seenFilters.limit, 200);
   assert.deepEqual(seenFilters.portal, ['linkedin', 'ejobs']);
+});
+
+test('paginates job listings with total metadata', async () => {
+  const store = createStore();
+  store.state.jobs = [
+    { id: 'job-1', title: 'One' },
+    { id: 'job-2', title: 'Two' },
+    { id: 'job-3', title: 'Three' },
+  ];
+
+  const response = await dispatchApi({
+    method: 'GET',
+    url: '/api/jobs?limit=2&offset=1',
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.jobs.map(job => job.id), ['job-2', 'job-3']);
+  assert.equal(response.body.limit, 2);
+  assert.equal(response.body.offset, 1);
+  assert.equal(response.body.total, 3);
 });
 
 test('proxies runner start with portal and rescan mode', async () => {

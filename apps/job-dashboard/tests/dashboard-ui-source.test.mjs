@@ -21,3 +21,12 @@ test('job details dialog renders generated AI drafts inline', async () => {
   assert.match(source, /upsertPackageState\(pkg\)/);
   assert.match(source, /renderJobPackageSection\(jobId,\s*pkg\)/);
 });
+
+test('job list requests one server-side page at a time', async () => {
+  const source = await readFile(appSource, 'utf8');
+
+  assert.match(source, /normalizeJobsResponse\(jobsResponse\)/);
+  assert.match(source, /selected\.set\('limit', String\(state\.jobPageSize\)\)/);
+  assert.match(source, /selected\.set\('offset', String\(\(state\.jobPage - 1\) \* state\.jobPageSize\)\)/);
+  assert.doesNotMatch(source, /selected\.set\('limit', '5000'\)/);
+});

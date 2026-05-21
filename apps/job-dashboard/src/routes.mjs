@@ -77,7 +77,17 @@ export async function dispatchApi(request, store, services = {}) {
     }
 
     if (method === 'GET' && url.pathname === '/api/jobs') {
-      return json(200, await store.listJobs(filtersFromSearch(url.searchParams)));
+      const filters = filtersFromSearch(url.searchParams);
+      const jobs = await store.listJobs(filters);
+      const total = typeof store.countJobs === 'function'
+        ? await store.countJobs(filters)
+        : jobs.length;
+      return json(200, {
+        jobs,
+        limit: filters.limit,
+        offset: filters.offset,
+        total,
+      });
     }
 
     if (method === 'POST' && url.pathname === '/api/jobs') {
@@ -355,6 +365,7 @@ export function createPostgresStore(pool) {
     async listJobs(filters = {}) {
       const { where, params } = buildJobsWhere(filters, pool.dialect);
       const limit = limitParam(filters.limit) || 200;
+      const offset = offsetParam(filters.offset);
       const result = await pool.query(`
         SELECT id, url, company, title, portal, location, description, source, status, notes,
                substr(description, 1, 300) AS "descriptionPreview",
@@ -378,8 +389,19 @@ export function createPostgresStore(pool) {
           ? 'ORDER BY COALESCE(cv_match_score, 0) DESC, COALESCE(fit_score, 0) DESC, updated_at DESC'
           : 'ORDER BY cv_match_score DESC NULLS LAST, fit_score DESC NULLS LAST, updated_at DESC'}
         LIMIT ${limit}
+        OFFSET ${offset}
       `, params);
       return result.rows;
+    },
+
+    async countJobs(filters = {}) {
+      const { where, params } = buildJobsWhere(filters, pool.dialect);
+      const result = await pool.query(`
+        SELECT COUNT(*) AS total
+        FROM jobs
+        ${where}
+      `, params);
+      return Number(result.rows[0]?.total || 0);
     },
 
     async getJob(id) {
@@ -1053,7 +1075,8 @@ function filtersFromSearch(searchParams) {
     minMatch: numericParam(searchParams.get('minMatch')),
     maxMatch: numericParam(searchParams.get('maxMatch')),
     incomplete: boolParam(searchParams.get('incomplete')),
-    limit: limitParam(searchParams.get('limit')),
+    limit: limitParam(searchParams.get('limit'), 200) || 50,
+    offset: offsetParam(searchParams.get('offset')),
     q: searchParams.get('q') || '',
   };
 }
@@ -1148,11 +1171,17 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function limitParam(value) {
+function limitParam(value, max = 5000) {
   if (value == null || value === '') return null;
   const parsed = Math.floor(Number(value));
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.min(parsed, 5000);
+  return Math.min(parsed, max);
+}
+
+function offsetParam(value) {
+  if (value == null || value === '') return 0;
+  const parsed = Math.floor(Number(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function arrayOfStrings(value) {
