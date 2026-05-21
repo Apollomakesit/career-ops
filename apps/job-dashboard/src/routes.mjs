@@ -1146,6 +1146,7 @@ function nullableNumber(value) {
 function filtersFromSearch(searchParams) {
   return {
     workModel: csvParam(searchParams.get('workModel')),
+    status: statusParam(searchParams.get('status')),
     portal: csvParam(searchParams.get('portal')),
     minSalary: numericParam(searchParams.get('minSalary')),
     maxSalary: numericParam(searchParams.get('maxSalary')),
@@ -1173,6 +1174,7 @@ function buildJobsWhere(filters = {}, dialect = 'postgres') {
   if (filters.portal?.length) {
     clauses.push(`portal IN (${filters.portal.map(add).join(', ')})`);
   }
+  if (filters.status) clauses.push(`status = ${add(filters.status)}`);
   if (filters.minSalary != null) clauses.push(`salary_min >= ${add(filters.minSalary)}`);
   if (filters.maxSalary != null) clauses.push(`salary_max <= ${add(filters.maxSalary)}`);
   if (filters.currency) clauses.push(`salary_currency = ${add(filters.currency)}`);
@@ -1231,6 +1233,11 @@ function numericParam(value) {
 
 function boolParam(value) {
   return ['1', 'true', 'yes'].includes(String(value || '').trim().toLowerCase());
+}
+
+function statusParam(value) {
+  const status = String(value || '').trim();
+  return status && status !== 'all' ? status : '';
 }
 
 function deepMerge(target = {}, ...sources) {

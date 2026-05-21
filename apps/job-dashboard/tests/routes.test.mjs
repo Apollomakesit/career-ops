@@ -404,13 +404,14 @@ test('passes incomplete job paging filters to the store', async () => {
 
   const response = await dispatchApi({
     method: 'GET',
-    url: '/api/jobs?incomplete=1&limit=5000&portal=linkedin,ejobs',
+    url: '/api/jobs?incomplete=1&limit=5000&portal=linkedin,ejobs&status=applied',
   }, store);
 
   assert.equal(response.status, 200);
   assert.equal(seenFilters.incomplete, true);
   assert.equal(seenFilters.limit, 200);
   assert.deepEqual(seenFilters.portal, ['linkedin', 'ejobs']);
+  assert.equal(seenFilters.status, 'applied');
 });
 
 test('paginates job listings with total metadata', async () => {

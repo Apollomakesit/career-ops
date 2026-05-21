@@ -166,6 +166,28 @@ test('listJobs can return incomplete rows beyond the normal dashboard page', asy
   assert.equal(incomplete[0].title, 'Incomplete LinkedIn Role');
 });
 
+test('listJobs and countJobs can filter by application status', async () => {
+  const store = await freshStore();
+  await store.createJob({
+    url: 'https://example.com/job/status-applied',
+    title: 'Applied Role',
+    status: 'applied',
+    fit: sampleFit,
+  });
+  await store.createJob({
+    url: 'https://example.com/job/status-reviewed',
+    title: 'Reviewed Role',
+    status: 'reviewed',
+    fit: sampleFit,
+  });
+
+  const applied = await store.listJobs({ status: 'applied' });
+  const appliedTotal = await store.countJobs({ status: 'applied' });
+
+  assert.deepEqual(applied.map(job => job.title), ['Applied Role']);
+  assert.equal(appliedTotal, 1);
+});
+
 test('job CV match stores rich breakdown evidence', async () => {
   const store = await freshStore();
   const created = await store.createJob({

@@ -77,7 +77,7 @@ document.querySelectorAll('[data-start-runner]').forEach(button => {
 document.querySelectorAll('[data-runner-action]').forEach(button => {
   button.addEventListener('click', () => runnerAction(button.dataset.runnerAction, '', button));
 });
-['filterWorkModel', 'filterPortal', 'filterMinSalary', 'filterMaxSalary', 'filterCurrency', 'filterPostedWithin', 'filterMinMatch', 'filterSearch'].forEach(id => {
+['status-filter', 'filterWorkModel', 'filterPortal', 'filterMinSalary', 'filterMaxSalary', 'filterCurrency', 'filterPostedWithin', 'filterMinMatch', 'filterSearch'].forEach(id => {
   const element = document.getElementById(id);
   element.addEventListener('input', applyFilters);
   element.addEventListener('change', applyFilters);
@@ -1385,6 +1385,7 @@ function jobsQueryString() {
 
 function updateLocationQuery() {
   const params = new URLSearchParams(window.location.search);
+  setParam(params, 'status', value('status-filter'));
   setParam(params, 'workModel', selectedValues('filterWorkModel').join(','));
   setParam(params, 'portal', selectedValues('filterPortal').join(','));
   setParam(params, 'minSalary', value('filterMinSalary'));
@@ -1408,6 +1409,7 @@ function updatePageParam() {
 
 function hydrateFiltersFromLocation() {
   const params = new URLSearchParams(window.location.search);
+  setValue('status-filter', params.get('status') || '');
   setSelectedValues('filterWorkModel', (params.get('workModel') || '').split(',').filter(Boolean));
   setSelectedValues('filterPortal', (params.get('portal') || '').split(',').filter(Boolean));
   setValue('filterMinSalary', params.get('minSalary') || '');
@@ -1425,6 +1427,7 @@ function hydrateFiltersFromLocation() {
 }
 
 function clearFilters() {
+  setValue('status-filter', '');
   setSelectedValues('filterWorkModel', []);
   setSelectedValues('filterPortal', []);
   setValue('filterMinSalary', '');

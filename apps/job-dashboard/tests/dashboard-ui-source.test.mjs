@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 const appSource = new URL('../public/app.js', import.meta.url);
+const indexSource = new URL('../public/index.html', import.meta.url);
 
 test('job details dialog wires Generate Package to the package generator', async () => {
   const source = await readFile(appSource, 'utf8');
@@ -40,4 +41,17 @@ test('AI scoring actions ask for confirmation before paid OpenAI requests', asyn
   assert.match(singleScoreBody, /This will send 1 job to OpenAI for scoring\. Continue\?/);
   assert.match(bulkScoreBody, /AI Score Jobs/);
   assert.match(bulkScoreBody, /This will send \$\{ids\.length\} job\(s\) to OpenAI for scoring\. Continue\?/);
+});
+
+test('job filters include application status in the UI and query state', async () => {
+  const [source, html] = await Promise.all([
+    readFile(appSource, 'utf8'),
+    readFile(indexSource, 'utf8'),
+  ]);
+
+  assert.match(html, /id="status-filter"/);
+  assert.match(html, /<option value="applied">Applied<\/option>/);
+  assert.match(source, /'status-filter'/);
+  assert.match(source, /setParam\(params, 'status', value\('status-filter'\)\)/);
+  assert.match(source, /setValue\('status-filter', params\.get\('status'\) \|\| ''\)/);
 });

@@ -1,4 +1,4 @@
-const JOB_FILTER_KEYS = ['workModel', 'portal', 'minSalary', 'maxSalary', 'currency', 'postedWithinDays', 'minMatch'];
+const JOB_FILTER_KEYS = ['workModel', 'status', 'portal', 'minSalary', 'maxSalary', 'currency', 'postedWithinDays', 'minMatch'];
 
 export function sanitizeSearchQuery(rawValue = '') {
   const value = String(rawValue || '').trim();
