@@ -56,6 +56,12 @@ function createStore() {
       state.jobs.push(created);
       return created;
     },
+    async updateJob(id, updates) {
+      const job = state.jobs.find(item => item.id === id);
+      if (!job) return null;
+      Object.assign(job, updates);
+      return job;
+    },
     async updateJobFit(id, fit) {
       const job = state.jobs.find(item => item.id === id);
       Object.assign(job, {
@@ -291,6 +297,48 @@ test('returns expanded job detail fields', async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.requirementsText, 'Python');
   assert.deepEqual(response.body.cvMatchedProjects, ['Project Helios']);
+});
+
+test('updates editable job fields without accepting unrelated keys', async () => {
+  const store = createStore();
+  store.state.jobs.push({
+    id: 'job-1',
+    title: 'Old title',
+    company: 'OldCo',
+    location: 'Remote',
+    status: 'discovered',
+    notes: '',
+  });
+
+  const response = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/job-1',
+    body: {
+      title: 'Senior Support Engineer',
+      company: 'NewCo',
+      location: 'Bucharest',
+      status: 'reviewed',
+      notes: 'Promising role.',
+      fitScore: 1,
+    },
+  }, store);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.title, 'Senior Support Engineer');
+  assert.equal(response.body.company, 'NewCo');
+  assert.equal(response.body.notes, 'Promising role.');
+  assert.equal(response.body.fitScore, undefined);
+});
+
+test('returns 404 when editing a missing job', async () => {
+  const response = await dispatchApi({
+    method: 'PATCH',
+    url: '/api/jobs/missing-job',
+    body: { title: 'Nope' },
+  }, createStore());
+
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error, 'job_not_found');
 });
 
 test('updates and deletes jobs in bulk', async () => {

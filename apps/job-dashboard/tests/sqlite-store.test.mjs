@@ -66,6 +66,33 @@ test('createJob upserts on duplicate url', async () => {
   assert.equal(list[0].title, 'Second');
 });
 
+test('updateJob changes editable fields and persists notes', async () => {
+  const store = await freshStore();
+  const created = await store.createJob({
+    url: 'https://example.com/job/editable',
+    title: 'First title',
+    company: 'FirstCo',
+    location: 'Remote',
+    status: 'discovered',
+    fit: sampleFit,
+  });
+
+  const updated = await store.updateJob(created.id, {
+    title: 'Updated title',
+    company: 'UpdatedCo',
+    location: 'Bucharest',
+    status: 'reviewed',
+    notes: 'Call recruiter before applying.',
+  });
+  const fetched = await store.getJob(created.id);
+
+  assert.equal(updated.title, 'Updated title');
+  assert.equal(updated.company, 'UpdatedCo');
+  assert.equal(fetched.location, 'Bucharest');
+  assert.equal(fetched.status, 'reviewed');
+  assert.equal(fetched.notes, 'Call recruiter before applying.');
+});
+
 test('job stats count totals and incomplete rows by portal', async () => {
   const store = await freshStore();
   await store.createJob({

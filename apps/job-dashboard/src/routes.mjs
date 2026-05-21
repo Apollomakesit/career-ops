@@ -91,6 +91,20 @@ export async function dispatchApi(request, store, services = {}) {
       return json(201, await store.createJob({ ...(request.body || {}), fit, cvMatch }));
     }
 
+    if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[2] && segments[2] !== 'bulk' && !segments[3]) {
+      const allowedFields = ['title', 'company', 'location', 'status', 'notes'];
+      const body = request.body && typeof request.body === 'object' ? request.body : {};
+      const updates = Object.fromEntries(
+        Object.entries(body)
+          .filter(([key]) => allowedFields.includes(key))
+          .map(([key, value]) => [key, String(value ?? '').trim()]),
+      );
+      if (Object.keys(updates).length === 0) return json(400, { error: 'no_valid_job_fields' });
+      const job = await store.updateJob(segments[2], updates);
+      if (!job) return json(404, { error: 'job_not_found' });
+      return json(200, job);
+    }
+
     if (method === 'PATCH' && segments[0] === 'api' && segments[1] === 'jobs' && segments[2] === 'bulk') {
       const ids = arrayOfStrings((request.body || {}).ids);
       const status = String((request.body || {}).status || '').trim();
@@ -342,7 +356,7 @@ export function createPostgresStore(pool) {
       const { where, params } = buildJobsWhere(filters, pool.dialect);
       const limit = limitParam(filters.limit) || 200;
       const result = await pool.query(`
-        SELECT id, url, company, title, portal, location, description, source, status,
+        SELECT id, url, company, title, portal, location, description, source, status, notes,
                substr(description, 1, 300) AS "descriptionPreview",
                fit_score AS "fitScore", fit_category AS "fitCategory",
                matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
@@ -370,7 +384,7 @@ export function createPostgresStore(pool) {
 
     async getJob(id) {
       const result = await pool.query(`
-        SELECT id, url, company, title, portal, location, description, source, status,
+        SELECT id, url, company, title, portal, location, description, source, status, notes,
                fit_score AS "fitScore", fit_category AS "fitCategory",
                matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
                risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
@@ -471,7 +485,7 @@ export function createPostgresStore(pool) {
           cv_missing_skills = EXCLUDED.cv_missing_skills,
           cv_match_breakdown = EXCLUDED.cv_match_breakdown,
           updated_at = now()
-        RETURNING id, url, company, title, portal, location, description, source, status,
+        RETURNING id, url, company, title, portal, location, description, source, status, notes,
                   fit_score AS "fitScore", fit_category AS "fitCategory",
                   matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
                   risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
@@ -518,6 +532,46 @@ export function createPostgresStore(pool) {
       ]);
       await appendEvent(pool, 'job', result.rows[0].id, 'job_created', `Job created: ${job.company || ''} ${job.title || ''}`.trim(), { fit, cvMatch });
       return { ...result.rows[0], fit, cvMatch };
+    },
+
+    async updateJob(id, updates) {
+      const editableColumns = {
+        title: 'title',
+        company: 'company',
+        location: 'location',
+        status: 'status',
+        notes: 'notes',
+      };
+      const entries = Object.entries(updates || {}).filter(([key]) => editableColumns[key]);
+      if (entries.length === 0) return null;
+      const setClause = entries
+        .map(([key], index) => `${editableColumns[key]} = $${index + 2}`)
+        .join(', ');
+      const result = await pool.query(`
+        UPDATE jobs
+        SET ${setClause},
+            updated_at = now()
+        WHERE id = $1
+        RETURNING id, url, company, title, portal, location, description, source, status, notes,
+                  fit_score AS "fitScore", fit_category AS "fitCategory",
+                  matched_skills AS "matchedSkills", missing_skills AS "missingSkills",
+                  risk_flags AS "riskFlags", recommendation, fit_reasons AS "fitReasons",
+                  salary_min AS "salaryMin", salary_max AS "salaryMax",
+                  salary_currency AS "salaryCurrency", salary_period AS "salaryPeriod",
+                  work_model AS "workModel", employment_type AS "employmentType",
+                  posted_date AS "postedDate", requirements_text AS "requirementsText",
+                  responsibilities_text AS "responsibilitiesText",
+                  cv_match_score AS "cvMatchScore",
+                  cv_matched_skills AS "cvMatchedSkills",
+                  cv_matched_projects AS "cvMatchedProjects",
+                  cv_missing_skills AS "cvMissingSkills",
+                  cv_match_breakdown AS "cvMatchBreakdown",
+                  created_at AS "createdAt", updated_at AS "updatedAt"
+      `, [id, ...entries.map(([, value]) => String(value ?? ''))]);
+      if (result.rows[0]) {
+        await appendEvent(pool, 'job', id, 'job_updated', `Job updated: ${result.rows[0].company || ''} ${result.rows[0].title || ''}`.trim(), { updates });
+      }
+      return result.rows[0] || null;
     },
 
     async updateJobFit(id, fit) {
