@@ -10,3 +10,14 @@ test('job details dialog wires Generate Package to the package generator', async
   assert.match(source, /data-generate-package-job="\$\{job\.id\}"/);
   assert.match(source, /generatePackage\(button\.dataset\.generatePackageJob,\s*button\)/);
 });
+
+test('job details dialog renders generated AI drafts inline', async () => {
+  const source = await readFile(appSource, 'utf8');
+
+  assert.match(source, /Generate AI Draft/);
+  assert.match(source, /data-job-package-section=/);
+  assert.match(source, /data-package-error/);
+  assert.match(source, /const pkg = await withRetry\(\(\) => api\(`\/api\/jobs\/\$\{jobId\}\/package\/generate`/);
+  assert.match(source, /upsertPackageState\(pkg\)/);
+  assert.match(source, /renderJobPackageSection\(jobId,\s*pkg\)/);
+});

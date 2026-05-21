@@ -272,6 +272,25 @@ function renderPackages() {
   });
 }
 
+function packageForJob(jobId) {
+  return state.packages.find(pkg => String(pkg.jobId) === String(jobId)) || null;
+}
+
+function upsertPackageState(pkg) {
+  if (!pkg) return;
+  const index = state.packages.findIndex(existing => (
+    (pkg.id && String(existing.id) === String(pkg.id))
+    || (pkg.jobId && String(existing.jobId) === String(pkg.jobId))
+  ));
+  if (index >= 0) state.packages.splice(index, 1, pkg);
+  else state.packages.unshift(pkg);
+}
+
+function findJobPackageSection(jobId) {
+  return [...document.querySelectorAll('[data-job-package-section]')]
+    .find(section => String(section.dataset.jobPackageSection) === String(jobId));
+}
+
 function renderEvents() {
   renderActivityTypeOptions();
   const events = filterEvents(state.events, state.activityFilters);
@@ -307,8 +326,8 @@ async function showJobDetails(jobId) {
         <h3>Actions</h3>
         ${job.url ? `<a class="primary-button action-link" href="${escapeHtml(job.url)}" target="_blank" rel="noopener">Open original posting</a>` : '<p class="muted">No job URL captured.</p>'}
         <button class="secondary-button detail-ai-button" data-score-ai-job="${job.id}">Score with AI</button>
-        <button class="secondary-button detail-package-button" data-generate-package-job="${job.id}">Generate Package</button>
       </article>
+      ${renderJobPackageCard(job, packageForJob(job.id))}
     </section>
     <section class="details-grid">
       <article>
@@ -348,11 +367,57 @@ async function showJobDetails(jobId) {
   document.querySelectorAll('.detail-ai-button').forEach(button => {
     button.addEventListener('click', () => scoreWithAi(button.dataset.scoreAiJob, button));
   });
-  document.querySelectorAll('.detail-package-button').forEach(button => {
-    button.addEventListener('click', () => generatePackage(button.dataset.generatePackageJob, button));
-  });
+  bindDetailPackageButtons();
   const dialog = document.getElementById('jobDetailsDialog');
   if (!dialog.open) dialog.showModal();
+}
+
+function renderJobPackageCard(job, pkg = packageForJob(job.id)) {
+  const packageBody = pkg ? `
+    <dl class="mini-kv">
+      <div><dt>Approval</dt><dd>${escapeHtml(pkg.approvalState || 'draft')}</dd></div>
+      <div><dt>Runner</dt><dd>${escapeHtml(pkg.runnerStatus || 'not_started')}</dd></div>
+    </dl>
+    <div class="evidence-block">
+      <strong>Cover letter</strong>
+      <p>${escapeHtml(pkg.coverLetter || 'No cover letter text returned yet.')}</p>
+    </div>
+    <div class="evidence-block">
+      <strong>Tailored CV excerpt</strong>
+      <div class="markdown-preview">${markdown(pkg.tailoredCvMd || 'No tailored CV excerpt returned yet.')}</div>
+    </div>
+    <div class="field-block">
+      <strong>Required fields</strong>
+      ${renderKeyValues(pkg.requiredFields)}
+    </div>
+    <div class="field-block">
+      <strong>Missing fields</strong>
+      ${renderKeyValues(pkg.missingFields)}
+    </div>
+  ` : '<p class="muted">No AI draft has been generated for this job yet.</p>';
+
+  return `
+    <article data-job-package-section="${escapeHtml(job.id)}">
+      <h3>Application Package</h3>
+      ${packageBody}
+      <button class="secondary-button detail-package-button" data-generate-package-job="${job.id}">Generate AI Draft</button>
+      <div class="field-errors" data-package-error></div>
+    </article>
+  `;
+}
+
+function bindDetailPackageButtons(root = document) {
+  root.querySelectorAll('.detail-package-button').forEach(button => {
+    button.addEventListener('click', () => generatePackage(button.dataset.generatePackageJob, button));
+  });
+}
+
+function renderJobPackageSection(jobId, pkg = packageForJob(jobId)) {
+  const section = findJobPackageSection(jobId);
+  if (!section) return;
+  const job = state.jobs.find(item => String(item.id) === String(jobId)) || { id: jobId };
+  section.outerHTML = renderJobPackageCard(job, pkg);
+  bindDetailPackageButtons();
 }
 
 async function createJob(event) {
@@ -377,11 +442,29 @@ async function createJob(event) {
 }
 
 async function generatePackage(jobId, button) {
-  await withButtonLoading(button, 'Generating...', async () => {
-    await withRetry(() => api(`/api/jobs/${jobId}/package/generate`, { method: 'POST', body: {} }));
-    await loadAll();
+  const previousText = button?.textContent;
+  const errorTarget = button?.closest('[data-job-package-section]')?.querySelector('[data-package-error]');
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Generating...';
+  }
+  if (errorTarget) errorTarget.textContent = '';
+  try {
+    const pkg = await withRetry(() => api(`/api/jobs/${jobId}/package/generate`, { method: 'POST', body: {} }));
+    upsertPackageState(pkg);
+    renderPackages();
+    renderJobPackageSection(jobId, pkg);
     showToast('Draft generated.', 'success');
-  });
+  } catch (error) {
+    const message = error.message || 'Could not generate an AI draft.';
+    if (errorTarget) errorTarget.innerHTML = `<p class="error-text">${escapeHtml(message)}</p>`;
+    showToast(message, 'error');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
+  }
 }
 
 async function scoreWithAi(jobId, button) {
