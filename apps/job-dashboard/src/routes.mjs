@@ -760,11 +760,8 @@ export function createPostgresStore(pool) {
 
     async updateRunnerDesiredConfig(payload) {
       const current = await this.getRunnerState();
-      const desiredConfig = {
-        ...(current.desiredConfig || {}),
-        ...payload,
-        updatedAt: new Date().toISOString(),
-      };
+      const desiredConfig = deepMerge({}, current.desiredConfig || {}, payload || {});
+      desiredConfig.updatedAt = new Date().toISOString();
       const result = await pool.query(`
         INSERT INTO runner_state (id, status, config, desired_config, ai_models, ai_gateway, updated_at)
         VALUES ('local', $1::jsonb, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, now())
@@ -1046,6 +1043,23 @@ function numericParam(value) {
 
 function boolParam(value) {
   return ['1', 'true', 'yes'].includes(String(value || '').trim().toLowerCase());
+}
+
+function deepMerge(target = {}, ...sources) {
+  const output = isPlainObject(target) ? { ...target } : {};
+  for (const source of sources) {
+    if (!isPlainObject(source)) continue;
+    for (const [key, value] of Object.entries(source)) {
+      output[key] = isPlainObject(value) && isPlainObject(output[key])
+        ? deepMerge(output[key], value)
+        : value;
+    }
+  }
+  return output;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function limitParam(value) {

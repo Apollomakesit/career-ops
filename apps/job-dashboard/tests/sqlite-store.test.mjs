@@ -261,3 +261,20 @@ test('runner state stores desired config and events accumulate', async () => {
   assert.ok(events.length > 0);
   assert.ok(events.every(event => typeof event.eventType === 'string'));
 });
+
+test('runner desired config updates preserve nested sibling settings', async () => {
+  const store = await freshStore();
+  await store.updateRunnerState({
+    desiredConfig: {
+      ai: { model: 'claude-haiku-4-5', cooldownMs: 1000 },
+      discovery: { totalBudget: 1000 },
+    },
+  });
+
+  await store.updateRunnerDesiredConfig({ ai: { model: 'gpt-5.4-mini' } });
+  const state = await store.getRunnerState();
+
+  assert.equal(state.desiredConfig.ai.model, 'gpt-5.4-mini');
+  assert.equal(state.desiredConfig.ai.cooldownMs, 1000);
+  assert.equal(state.desiredConfig.discovery.totalBudget, 1000);
+});
