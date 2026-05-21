@@ -40,8 +40,8 @@ export async function dispatchApi(request, store, services = {}) {
     }
 
     if (method === 'PUT' && url.pathname === '/api/cv') {
-      const markdown = typeof request.body === 'string' ? request.body : String((request.body || {}).markdown || '');
-      if (!markdown.trim()) {
+      const { markdown } = request.body || {};
+      if (typeof markdown !== 'string' || !markdown.trim()) {
         return json(400, { error: 'cv_markdown_required', message: 'CV markdown cannot be empty.' });
       }
       const result = await writeCv(markdown);

@@ -231,6 +231,24 @@ test('rejects empty canonical CV markdown updates', async () => {
   assert.deepEqual(writes, []);
 });
 
+test('rejects non-string canonical CV markdown updates', async () => {
+  const writes = [];
+  const response = await dispatchApi({
+    method: 'PUT',
+    url: '/api/cv',
+    body: { markdown: 123 },
+  }, createStore(), {
+    writeCv: async markdown => {
+      writes.push(markdown);
+      return { markdown };
+    },
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, 'cv_markdown_required');
+  assert.deepEqual(writes, []);
+});
+
 test('creates a job with fit scoring', async () => {
   const store = createStore();
   const response = await dispatchApi({
