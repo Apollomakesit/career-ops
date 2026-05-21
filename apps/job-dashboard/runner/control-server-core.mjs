@@ -279,11 +279,12 @@ function response(status, body) {
 }
 
 function localDashboardOrigins() {
+  const dashboardUrl = normalizeOrigin(process.env.DASHBOARD_URL || 'http://127.0.0.1:3000');
   const configured = String(process.env.LOCAL_RUNNER_ALLOWED_ORIGINS || '')
     .split(',')
     .map(normalizeOrigin)
     .filter(Boolean);
-  return [...new Set([...defaultDashboardOrigins, ...configured])];
+  return [...new Set([dashboardUrl, ...defaultDashboardOrigins, ...configured].filter(Boolean))];
 }
 
 function normalizeOrigin(value = '') {

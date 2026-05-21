@@ -138,6 +138,20 @@ test('control CORS headers allow the local dashboard origin without wildcard acc
   assert.equal(headers.vary, 'origin');
 });
 
+test('control CORS headers allow the configured dashboard URL without wildcard access', () => {
+  const previous = process.env.DASHBOARD_URL;
+  process.env.DASHBOARD_URL = 'https://dashboard.example';
+  try {
+    const headers = controlCorsHeaders('https://dashboard.example');
+
+    assert.equal(headers['access-control-allow-origin'], 'https://dashboard.example');
+    assert.notEqual(headers['access-control-allow-origin'], '*');
+  } finally {
+    if (previous === undefined) delete process.env.DASHBOARD_URL;
+    else process.env.DASHBOARD_URL = previous;
+  }
+});
+
 test('control CORS headers reject unrelated browser origins', () => {
   const headers = controlCorsHeaders('https://example.invalid');
 
