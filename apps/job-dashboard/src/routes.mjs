@@ -688,12 +688,12 @@ export function createPostgresStore(pool) {
                responsibilities_text AS "responsibilitiesText"
         FROM jobs
       `);
-      let updated = 0;
-      for (const job of result.rows) {
-        const cvMatch = scoreJob(job, context);
-        await this.updateJobCvMatch(job.id, cvMatch);
-        updated += 1;
-      }
+      const updates = result.rows.map(job => ({
+        id: job.id,
+        cvMatch: normalizeCvMatchPayload(scoreJob(job, context)),
+      }));
+      await updateJobCvMatchBatch(pool, updates);
+      const updated = updates.length;
       await appendEvent(pool, 'job', null, 'cv_match_backfilled', `Re-scored ${updated} job(s) against cv.md`, {});
       return { updated };
     },
@@ -990,6 +990,85 @@ async function appendEvent(pool, entityType, entityId, eventType, message, paylo
     INSERT INTO events (entity_type, entity_id, event_type, message, payload)
     VALUES ($1, $2, $3, $4, $5::jsonb)
   `, [entityType, entityId, eventType, message, JSON.stringify(payload || {})]);
+}
+
+async function updateJobCvMatchBatch(pool, updates = []) {
+  if (updates.length === 0) return;
+  const client = pool.dialect === 'sqlite'
+    ? { query: pool.query, release() {} }
+    : await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const chunk of chunkArray(updates, 50)) {
+      if (pool.dialect === 'sqlite') {
+        await updateJobCvMatchSqliteChunk(client, chunk);
+      } else {
+        await updateJobCvMatchPostgresChunk(client, chunk);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateJobCvMatchPostgresChunk(client, chunk) {
+  const valuesSql = chunk.map((_, index) => {
+    const base = index * 6;
+    return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+  }).join(', ');
+  const params = chunk.flatMap(({ id, cvMatch }) => [
+    id,
+    cvMatch.score,
+    JSON.stringify(cvMatch.matchedSkills),
+    JSON.stringify(cvMatch.matchedProjects),
+    JSON.stringify(cvMatch.missingSkills),
+    JSON.stringify(cvMatch.breakdown),
+  ]);
+  await client.query(`
+    UPDATE jobs
+    SET cv_match_score = tmp.score,
+        cv_matched_skills = tmp.matched_skills::jsonb,
+        cv_matched_projects = tmp.matched_projects::jsonb,
+        cv_missing_skills = tmp.missing_skills::jsonb,
+        cv_match_breakdown = tmp.breakdown::jsonb,
+        updated_at = now()
+    FROM (VALUES ${valuesSql}) AS tmp(id, score, matched_skills, matched_projects, missing_skills, breakdown)
+    WHERE jobs.id = tmp.id::uuid
+  `, params);
+}
+
+async function updateJobCvMatchSqliteChunk(client, chunk) {
+  for (const { id, cvMatch } of chunk) {
+    await client.query(`
+      UPDATE jobs
+      SET cv_match_score = $2,
+          cv_matched_skills = $3::jsonb,
+          cv_matched_projects = $4::jsonb,
+          cv_missing_skills = $5::jsonb,
+          cv_match_breakdown = $6::jsonb,
+          updated_at = now()
+      WHERE id = $1
+    `, [
+      id,
+      cvMatch.score,
+      JSON.stringify(cvMatch.matchedSkills),
+      JSON.stringify(cvMatch.matchedProjects),
+      JSON.stringify(cvMatch.missingSkills),
+      JSON.stringify(cvMatch.breakdown),
+    ]);
+  }
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function jobToFit(job = {}) {
