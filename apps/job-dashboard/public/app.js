@@ -111,12 +111,21 @@ document.getElementById('importJobsInput').addEventListener('change', importJobs
 document.getElementById('clearActivityFiltersButton').addEventListener('click', clearActivityFilters);
 
 hydrateFiltersFromLocation();
-await loadAll();
+await init();
 await loadRunnerStatus({ alertOnError: false });
 await loadRunnerProgress();
 connectRunnerEvents();
 setInterval(() => loadRunnerStatus({ alertOnError: false }), 5000);
 setInterval(() => loadRunnerProgress(), 2000);
+
+async function init() {
+  showSkeletons();
+  try {
+    await loadAll();
+  } finally {
+    hideSkeletons();
+  }
+}
 
 async function loadAll() {
   const [profile, portals, jobsResponse, jobStats, packagesList, events, cv] = await Promise.all([
@@ -148,6 +157,73 @@ async function loadAll() {
   renderEvents();
   renderCv();
   renderJobStats();
+}
+
+function showSkeletons() {
+  setSkeletonHtml('jobsTable', `
+    <div class="row header" data-skeleton>
+      <div>Pick</div>
+      <div>CV Match</div>
+      <div>AI Fit</div>
+      <div>Title</div>
+      <div>Company</div>
+      <div>Work</div>
+      <div>Salary</div>
+      <div>Posted</div>
+      <div>Status</div>
+      <div>Actions</div>
+    </div>
+    ${Array.from({ length: 5 }, () => `
+      <div class="row job-row skeleton-row" data-skeleton>
+        <span class="skeleton-line skeleton-dot"></span>
+        <span class="skeleton-line skeleton-short"></span>
+        <span class="skeleton-line skeleton-short"></span>
+        <span class="skeleton-line skeleton-title"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line skeleton-chip"></span>
+        <span class="skeleton-line skeleton-medium"></span>
+        <span class="skeleton-line skeleton-short"></span>
+        <span class="skeleton-line skeleton-chip"></span>
+        <span class="skeleton-line skeleton-actions"></span>
+      </div>
+    `).join('')}
+  `);
+  setSkeletonHtml('jobsPagination', '<span class="skeleton-line skeleton-pagination" data-skeleton></span>');
+  setSkeletonHtml('packagesList', skeletonCards(2, ['skeleton-title', 'skeleton-medium', 'skeleton-wide']));
+  setSkeletonHtml('eventsList', skeletonCards(3, ['skeleton-medium', 'skeleton-wide', 'skeleton-short']));
+  setSkeletonHtml('portalsList', skeletonCards(4, ['skeleton-title', 'skeleton-wide', 'skeleton-medium']));
+  setSkeletonHtml('jobStatsSummary', Array.from({ length: 4 }, () => '<span class="skeleton-line skeleton-stat" data-skeleton></span>').join(''));
+  setSkeletonHtml('portalProgressCards', skeletonCards(4, ['skeleton-title', 'skeleton-wide']));
+  setSkeletonHtml('cvPreview', `
+    <div data-skeleton>
+      <span class="skeleton-line skeleton-title"></span>
+      <span class="skeleton-line skeleton-wide"></span>
+      <span class="skeleton-line skeleton-wide"></span>
+      <span class="skeleton-line skeleton-medium"></span>
+    </div>
+  `);
+}
+
+function hideSkeletons() {
+  document.querySelectorAll('[data-skeleton]').forEach(element => element.remove());
+  ['jobsTable', 'jobsPagination', 'packagesList', 'eventsList', 'portalsList', 'jobStatsSummary', 'portalProgressCards', 'cvPreview'].forEach(id => {
+    document.getElementById(id)?.removeAttribute('aria-busy');
+  });
+}
+
+function setSkeletonHtml(id, html) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.setAttribute('aria-busy', 'true');
+  target.innerHTML = html;
+}
+
+function skeletonCards(count, lines) {
+  return Array.from({ length: count }, () => `
+    <div class="item skeleton-card" data-skeleton>
+      ${lines.map(className => `<span class="skeleton-line ${className}"></span>`).join('')}
+    </div>
+  `).join('');
 }
 
 function normalizeJobsResponse(jobsResponse) {

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 const appSource = new URL('../public/app.js', import.meta.url);
 const indexSource = new URL('../public/index.html', import.meta.url);
+const stylesSource = new URL('../public/styles.css', import.meta.url);
 
 test('job details dialog wires Generate Package to the package generator', async () => {
   const source = await readFile(appSource, 'utf8');
@@ -54,4 +55,21 @@ test('job filters include application status in the UI and query state', async (
   assert.match(source, /'status-filter'/);
   assert.match(source, /setParam\(params, 'status', value\('status-filter'\)\)/);
   assert.match(source, /setValue\('status-filter', params\.get\('status'\) \|\| ''\)/);
+});
+
+test('initial dashboard load renders skeleton placeholders before API data arrives', async () => {
+  const [source, css] = await Promise.all([
+    readFile(appSource, 'utf8'),
+    readFile(stylesSource, 'utf8'),
+  ]);
+  const initBody = source.match(/async function init\(\) \{([\s\S]*?)\n\}/)?.[1] || '';
+
+  assert.match(source, /await init\(\)/);
+  assert.match(initBody, /showSkeletons\(\)/);
+  assert.match(initBody, /await loadAll\(\)/);
+  assert.match(initBody, /finally \{\s*hideSkeletons\(\);?\s*\}/);
+  assert.match(source, /function showSkeletons\(\)/);
+  assert.match(source, /data-skeleton/);
+  assert.match(css, /\.skeleton-line/);
+  assert.match(css, /@keyframes skeleton-pulse/);
 });
