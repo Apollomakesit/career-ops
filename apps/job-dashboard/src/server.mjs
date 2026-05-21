@@ -106,6 +106,24 @@ export function resolveDashboardServices({
   };
 }
 
+export function attachShutdownHandlers({
+  server,
+  pool,
+  processLike = process,
+} = {}) {
+  let shuttingDown = false;
+  const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await new Promise(resolve => server.close(resolve));
+    await pool.end();
+    processLike.exit(0);
+  };
+  processLike.on('SIGTERM', shutdown);
+  processLike.on('SIGINT', shutdown);
+  return shutdown;
+}
+
 function nonEmptyEnv(env) {
   return Object.fromEntries(
     Object.entries(env || {}).filter(([, value]) => value !== undefined && value !== null && String(value) !== ''),
@@ -172,4 +190,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   server.listen(port, () => {
     console.log(`career-ops job dashboard listening on :${port}`);
   });
+  attachShutdownHandlers({ server, pool });
 }

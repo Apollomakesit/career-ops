@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDashboardServer, resolveDashboardServices } from '../src/server.mjs';
+import { attachShutdownHandlers, createDashboardServer, resolveDashboardServices } from '../src/server.mjs';
 
 test('serves health response through HTTP', async () => {
   let healthCalls = 0;
@@ -171,6 +171,39 @@ test('explicit AI env configuration wins over local runner config', () => {
   assert.equal(services.aiBaseUrl, 'https://gateway.example/openai/v1');
   assert.equal(services.aiModel, 'gpt-5.4-mini');
   assert.equal(services.aiApiKey, 'env-key');
+});
+
+test('shutdown handlers close the HTTP server and database pool before exit', async () => {
+  const handlers = {};
+  const calls = [];
+  const shutdown = attachShutdownHandlers({
+    server: {
+      close(callback) {
+        calls.push('server.close');
+        callback();
+      },
+    },
+    pool: {
+      async end() {
+        calls.push('pool.end');
+      },
+    },
+    processLike: {
+      on(signal, handler) {
+        handlers[signal] = handler;
+      },
+      exit(code) {
+        calls.push(`exit:${code}`);
+      },
+    },
+  });
+
+  assert.equal(typeof handlers.SIGTERM, 'function');
+  assert.equal(typeof handlers.SIGINT, 'function');
+
+  await shutdown();
+
+  assert.deepEqual(calls, ['server.close', 'pool.end', 'exit:0']);
 });
 
 function listen(server) {
