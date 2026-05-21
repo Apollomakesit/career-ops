@@ -21,6 +21,24 @@ export function createPool(connectionString = process.env.DATABASE_URL) {
   return createSqlitePool(process.env.SQLITE_PATH || defaultSqlitePath);
 }
 
+export async function waitForDatabase(pool, {
+  attempts = 5,
+  baseDelayMs = 1000,
+  sleep = delay,
+} = {}) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await pool.query('SELECT 1');
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) break;
+      await sleep(baseDelayMs * (2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
 function createPgPool(connectionString) {
   const pool = new Pool({
     connectionString,
@@ -48,6 +66,10 @@ export async function withClient(pool, fn) {
 
 function needsSsl(connectionString) {
   return /railway|proxy\.rlwy|amazonaws|render|supabase/i.test(connectionString);
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------

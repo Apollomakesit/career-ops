@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -171,6 +172,13 @@ test('explicit AI env configuration wins over local runner config', () => {
   assert.equal(services.aiBaseUrl, 'https://gateway.example/openai/v1');
   assert.equal(services.aiModel, 'gpt-5.4-mini');
   assert.equal(services.aiApiKey, 'env-key');
+});
+
+test('server startup waits for database connectivity before migrations', async () => {
+  const source = await readFile(new URL('../src/server.mjs', import.meta.url), 'utf8');
+
+  assert.match(source, /import \{ createPool, waitForDatabase \} from '\.\/db\.mjs';/);
+  assert.match(source, /const pool = createPool\(\);\s+await waitForDatabase\(pool\);\s+await migrate\(pool\);/);
 });
 
 test('shutdown handlers close the HTTP server and database pool before exit', async () => {

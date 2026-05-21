@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createPool } from './db.mjs';
+import { createPool, waitForDatabase } from './db.mjs';
 import { migrate } from './schema.mjs';
 import { createPostgresStore, dispatchApi } from './routes.mjs';
 import { resolveAiRuntimeConfig } from './ai-generator.mjs';
@@ -184,6 +184,7 @@ function requiresConfiguredToken(req) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const pool = createPool();
+  await waitForDatabase(pool);
   await migrate(pool);
   const server = createDashboardServer({ store: createPostgresStore(pool) });
   const port = Number(process.env.PORT || 3000);
