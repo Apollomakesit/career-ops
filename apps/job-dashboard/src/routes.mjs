@@ -808,8 +808,40 @@ export function createPostgresStore(pool) {
     },
 
     async claimRunnerCommand() {
-      // Portable across Postgres and SQLite. This dashboard is single-user, so
-      // claiming the oldest queued command without row locking is sufficient.
+      if (pool.dialect !== 'sqlite' && typeof pool.connect === 'function') {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const queued = await client.query(`
+            SELECT id
+            FROM runner_commands
+            WHERE status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+          `);
+          if (queued.rows.length === 0) {
+            await client.query('COMMIT');
+            return null;
+          }
+          const result = await client.query(`
+            UPDATE runner_commands
+            SET status = 'running', claimed_at = now(), updated_at = now()
+            WHERE id = $1
+            RETURNING id, runner, status, payload, logs, exit_code AS "exitCode",
+                      created_at AS "createdAt", claimed_at AS "claimedAt",
+                      finished_at AS "finishedAt", updated_at AS "updatedAt"
+          `, [queued.rows[0].id]);
+          await client.query('COMMIT');
+          return result.rows[0] || null;
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally {
+          client.release();
+        }
+      }
+
       const result = await pool.query(`
         UPDATE runner_commands
         SET status = 'running', claimed_at = now(), updated_at = now()

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dispatchApi } from '../src/routes.mjs';
+import { createPostgresStore, dispatchApi } from '../src/routes.mjs';
 
 function createStore() {
   const state = {
@@ -652,4 +652,47 @@ test('stores desired local runner config from the dashboard', async () => {
 
   assert.equal(response.status, 200);
   assert.equal(response.body.desiredConfig.aiModel, 'claude-haiku-4-5');
+});
+
+test('postgres runner command claims use row locking to avoid duplicate claims', async () => {
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      calls.push({ sql: text, params });
+      if (text === 'BEGIN' || text === 'COMMIT' || text === 'ROLLBACK') return { rows: [] };
+      if (/SELECT id\s+FROM runner_commands/i.test(text)) return { rows: [{ id: 'cmd-1' }] };
+      if (/UPDATE runner_commands/i.test(text)) {
+        return {
+          rows: [{
+            id: 'cmd-1',
+            runner: 'discover',
+            status: 'running',
+            payload: {},
+            logs: [],
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+    release() {
+      calls.push({ sql: 'RELEASE', params: [] });
+    },
+  };
+  const store = createPostgresStore({
+    dialect: 'postgres',
+    connect: async () => client,
+    query: async () => {
+      throw new Error('claimRunnerCommand should use a transaction client for Postgres');
+    },
+  });
+
+  const claimed = await store.claimRunnerCommand();
+  const selectCall = calls.find(call => /SELECT id\s+FROM runner_commands/i.test(call.sql));
+
+  assert.equal(claimed.id, 'cmd-1');
+  assert.equal(calls[0].sql, 'BEGIN');
+  assert.match(selectCall.sql, /FOR UPDATE SKIP LOCKED/i);
+  assert.ok(calls.some(call => call.sql === 'COMMIT'));
+  assert.ok(calls.some(call => call.sql === 'RELEASE'));
 });
