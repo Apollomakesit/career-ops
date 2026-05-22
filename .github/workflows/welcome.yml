@@ -8,7 +8,7 @@ on:
 
 jobs:
   welcome:
-    runs-on: [self-hosted, Windows, X64, local]
+    runs-on: [self-hosted, Linux, X64, local]
     permissions:
       issues: write
       pull-requests: write

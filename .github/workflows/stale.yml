@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   stale:
-    runs-on: [self-hosted, Windows, X64, local]
+    runs-on: [self-hosted, Linux, X64, local]
     steps:
       - uses: actions/stale@v9
         with:

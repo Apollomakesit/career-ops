@@ -15,7 +15,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze
-    runs-on: [self-hosted, Windows, X64, local]
+    runs-on: [self-hosted, Linux, X64, local]
     strategy:
       fail-fast: false
       matrix:

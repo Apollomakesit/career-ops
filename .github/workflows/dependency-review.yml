@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   dependency-review:
-    runs-on: [self-hosted, Windows, X64, local]
+    runs-on: [self-hosted, Linux, X64, local]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
