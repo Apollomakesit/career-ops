@@ -1,4 +1,4 @@
-name: Welcome
+﻿name: Welcome
 
 on:
   pull_request_target:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   welcome:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, local]
     permissions:
       issues: write
       pull-requests: write
@@ -20,7 +20,7 @@ jobs:
             Welcome to career-ops, @${{ github.actor }}! Thanks for your first PR.
 
             A few things to know:
-            - Tests will run automatically — check the status below
+            - Tests will run automatically â€” check the status below
             - Make sure you've linked a related issue (required for features)
             - Read [CONTRIBUTING.md](https://github.com/santifer/career-ops/blob/main/CONTRIBUTING.md) if you haven't
 

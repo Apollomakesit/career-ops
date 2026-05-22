@@ -1,4 +1,4 @@
-name: 'Close stale issues and PRs'
+﻿name: 'Close stale issues and PRs'
 on:
   schedule:
     - cron: '0 6 * * 1' # Every Monday at 6am UTC
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   stale:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, local]
     steps:
       - uses: actions/stale@v9
         with:

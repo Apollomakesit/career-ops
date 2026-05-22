@@ -1,4 +1,4 @@
-name: Release Please
+﻿name: Release Please
 on:
   push:
     branches: [main]
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64, local]
     steps:
       - uses: googleapis/release-please-action@v4
         with:
